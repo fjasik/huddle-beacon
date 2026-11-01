@@ -44,8 +44,10 @@ class Gossiper:
 
     async def settle(self) -> None:
         """Wait for pushes under way (tests, shutdown)."""
-        while self._pushes:
-            await asyncio.gather(*self._pushes, return_exceptions=True)
+        # Only the unfinished ones: awaiting finished tasks never yields, so their done callbacks (which empty the
+        # set) would never run and this would spin.
+        while pending := [task for task in self._pushes if not task.done()]:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _push_to(self, url: str, wires: list[bytes]) -> None:
         try:
