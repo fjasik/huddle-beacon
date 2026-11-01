@@ -26,6 +26,13 @@ class Reason(StrEnum):
     BAD_FIELD = "bad_field"
     BAD_GROUP_SIG = "bad_group_sig"
     BAD_USER_SIG = "bad_user_sig"
+    # venue records
+    BAD_VENUE_SIG = "bad_venue_sig"
+    NOT_VENUE_KEY = "not_venue_key"
+    BAD_CERT = "bad_cert"
+    REVOKED = "revoked"
+    NO_VENUE = "no_venue"
+    """a venue record reached a node that has no venue key configured"""
 
 
 class Rejected(Exception):

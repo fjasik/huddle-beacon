@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
-from beacon.records import GroupRecord, decode_record
+from beacon.records.any import AnyRecord, decode_any
 
 Channel = bytes
-"""A group ID (16 bytes). The venue channel comes with the trust phase."""
+"""A group ID (16 bytes), or the venue channel (16 zero bytes)."""
 
 Vector = dict[bytes, int]
 """signer → highest seq held with no gap below it"""
@@ -79,7 +79,7 @@ class Store:
     def close(self) -> None:
         self._db.close()
 
-    def put(self, record: GroupRecord) -> PutResult:
+    def put(self, record: AnyRecord) -> PutResult:
         channel, signer, seq = record.record_id
         wire = record.wire
         existing = self._db.execute(
@@ -98,7 +98,7 @@ class Store:
         with self._db:
             self._db.execute(
                 "INSERT INTO records (channel, signer, seq, type, ts, wire, received) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (channel, signer, seq, int(record.body.type), record.body.ts, wire, now),
+                (channel, signer, seq, record.type_code, record.ts, wire, now),
             )
         self._signer(channel, signer).add(seq)
         return PutResult.NEW
@@ -130,16 +130,23 @@ class Store:
                 out.extend(row[0] for row in rows)
         return out
 
-    def list_channel(self, channel: Channel) -> list[GroupRecord]:
+    def list_channel(self, channel: Channel) -> list[AnyRecord]:
         rows = self._db.execute("SELECT wire FROM records WHERE channel = ? ORDER BY ts, signer, seq", (channel,))
-        return [decode_record(row[0]) for row in rows]
+        return [decode_any(row[0]) for row in rows]
 
-    def recent(self, limit: int) -> list[tuple[GroupRecord, int]]:
+    def recent(self, limit: int) -> list[tuple[AnyRecord, int]]:
         """The last records taken in, newest first, with the local time each arrived (ms)."""
         rows = self._db.execute(
             "SELECT wire, received FROM records ORDER BY received DESC, rowid DESC LIMIT ?", (limit,)
         )
-        return [(decode_record(wire), received) for wire, received in rows]
+        return [(decode_any(wire), received) for wire, received in rows]
+
+    def max_seq(self, channel: Channel, signer: bytes) -> int:
+        """The highest seq held from this signer in this channel (0 if none): where a node's own counter resumes."""
+        row = self._db.execute(
+            "SELECT MAX(seq) FROM records WHERE channel = ? AND signer = ?", (channel, signer)
+        ).fetchone()
+        return int(row[0] or 0)
 
     def count(self) -> int:
         return int(self._db.execute("SELECT COUNT(*) FROM records").fetchone()[0])

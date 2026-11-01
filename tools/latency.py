@@ -1,6 +1,6 @@
 """Measure how long a record posted to one node takes to show up on another.
 
-    python tools/latency.py --from 8441 --to 8443 --count 20
+    python tools/latency.py --from 1 --to 3 --count 20      # node numbers (dev ports 854N), or URLs
 
 Posts `count` messages from a throwaway user and group to the first node, and polls the second node's /status every
 few milliseconds until its record count goes up. Prints each delay and the median and worst. The poll interval
@@ -25,7 +25,9 @@ TIMEOUT_S = 10.0
 
 
 def url(node: str) -> str:
-    return f"http://127.0.0.1:{node}" if node.isdigit() else node.rstrip("/")
+    if node.isdigit():
+        return f"http://127.0.0.1:{8540 + int(node) if int(node) < 100 else int(node)}"
+    return node.rstrip("/")
 
 
 def records_on(node: str) -> int:
@@ -42,8 +44,8 @@ def push(node: str, wire: bytes) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--from", dest="source", default="8441")
-    parser.add_argument("--to", dest="target", default="8443")
+    parser.add_argument("--from", dest="source", default="1")
+    parser.add_argument("--to", dest="target", default="3")
     parser.add_argument("--count", type=int, default=20)
     args = parser.parse_args()
 

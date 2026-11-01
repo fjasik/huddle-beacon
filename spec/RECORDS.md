@@ -73,3 +73,53 @@ The same `(group ID, author, seq)` with the same bytes is a duplicate, and is ig
 ## Sizes
 
 Typical records are 257–297 bytes: a position is about 281 bytes, a short message about 284. That is more than one 247-byte BLE packet, so ask for an MTU of 517. The framing splits anything larger.
+
+## Content encryption (optional, `enc = 1`)
+
+A writer may encrypt the payload with the group's encryption key. It encrypts first and signs second, so beacons check both signatures exactly as for plaintext and never need the key.
+
+```
+payload = nonce (24 random bytes) ‖ XChaCha20-Poly1305(key = group encryption key, nonce, plaintext payload, aad)
+aad     = canonical CBOR map {v, type, gpub, author, seq, ts, enc: 1}   (the body without its payload)
+```
+
+A phone that can't decrypt a record (wrong group key, or ciphertext moved under another body) drops it. Beacons store and relay `enc = 1` records unchanged. The `encrypted` vectors give a plaintext, its aad and the resulting record.
+
+## Venue channel
+
+Beacons also sync **venue records**, in the channel `16 zero bytes`, using the same version vectors and gossip as groups. Unlike group records, they are signed once, and beacons do read their payloads.
+
+```
+wire = CBOR array [ body: bstr, sig: bstr(64) ]          (2 elements; group records have 3)
+body = CBOR map { v: 1, type, signer: bstr(32), seq, ts, payload: bstr }
+sig  = Ed25519(signer, "huddle/v1/venue-record" ‖ body)
+```
+
+| `type` | Name | Signer | Payload |
+|---|---|---|---|
+| 1 | beacon | the beacon's own key | `beacon_id`, `url` (where peers reach it), `cert` (its compact certificate) |
+| 2 | revoke | the venue key | `beacon_id`, `pub` (the revoked beacon's key) |
+
+Checks, after structure (`malformed`, `bad_version`, `bad_field`, `bad_type` as above):
+
+| Reason | When |
+|---|---|
+| `bad_venue_sig` | `sig` does not verify against `signer` |
+| `not_venue_key` | a revoke not signed by the venue key |
+| `bad_cert` | a beacon record whose certificate doesn't verify against the venue key, is expired, is not a beacon certificate, or names another key or ID than the record's signer |
+| `revoked` | a beacon record from a revoked beacon |
+| `no_venue` | a venue record reached a node with no venue key configured |
+
+A node keeps the latest `beacon` record per signer as its **roster** (where each beacon is), and the set of revoked keys. Phones receive revocations in their pull.
+
+## Compact certificates
+
+The venue key signs a certificate for each beacon's (and operator's) own Ed25519 key:
+
+```
+cert = CBOR array [ body: bstr, sig: bstr(64) ]
+body = CBOR map { v: 1, venue_id, role: "beacon" | "operator", id, pub: bstr(32), not_before, expires }   (Unix s)
+sig  = Ed25519(venue key, "huddle/v1/beacon-cert" ‖ body)
+```
+
+It is valid when the signature checks out against the venue public key and `not_before ≤ now < expires`. The same key also has an X.509 certificate (subject CN `beacon-<id>` / `operator-<id>`, issued by the venue CA) for mutual TLS between beacons. That one is not part of this spec, since phones never see it.

@@ -1,8 +1,6 @@
 # huddle-beacon
 
-The software on each Huddle beacon (a UWB anchor Pi). It stores signed group records (messages, positions, pins) and gossips them to the other beacons, so every beacon holds a full copy. Phones read and write over Bluetooth (later). Design: `context/huddle_m4_mesh_plan.md` in the workspace.
-
-First goal: several beacon processes gossiping on one PC, tested by hand with a command-line tool that acts as a phone.
+The software on each Huddle beacon (a UWB anchor Pi). It stores signed group records (messages, positions, pins) and gossips them to the other beacons over mutual TLS, so every beacon holds a full copy. Phones read and write over Bluetooth (later; for now a command-line tool stands in for the phone). Design: `context/huddle_m4_mesh_plan.md` in the workspace. Record format: `spec/RECORDS.md`.
 
 ## Setup
 
@@ -24,34 +22,50 @@ On Linux or the Pi: `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`
 .venv\Scripts\pytest
 ```
 
-## Run
+## How it fits together
 
-One node: `.venv\Scripts\python -m beacon run --config node1.toml` (format in `beacon/config.py`).
+- **Records:** each one is signed twice, by its author (user key) and by its group (group key, derived from the invite seed). Every beacon checks both signatures before storing or passing a record on. The content can optionally be encrypted with the group key (`--encrypt` in the CLI); beacons check and relay it without being able to read it.
+- **Trust:** the venue key (the operator's, in `data/local/venue/`) signs a certificate for each beacon's own key. Beacons talk to each other only over mutual TLS with venue certificates. They gossip a **roster** (which beacon is where) and the operator's **revocations**: a revoked beacon is refused by all the others.
+- **Ports per node N:** `844N` is the peer API (mutual TLS). `854N` is the local-only status page and dev API (plain HTTP, 127.0.0.1).
 
 ## Try it by hand
 
-Terminal 1, three nodes on ports 8441–8443, each seeded with the others:
+Set up a venue, an operator and three beacons, then start each beacon in its own terminal to watch its log:
 
 ```powershell
-.venv\Scripts\python tools\run_local.py 3 --fresh
+.venv\Scripts\python tools\run_local.py 3 --fresh --setup
+.venv\Scripts\python -m beacon run --config data\local\node1.toml      # terminal 1
+.venv\Scripts\python -m beacon run --config data\local\node2.toml      # terminal 2
+.venv\Scripts\python -m beacon run --config data\local\node3.toml      # terminal 3
 ```
 
-Terminal 2, the stand-in phone (`tools/dev_cli.py`; keys and seeds in `data/cli/state.json`):
+Status pages: http://127.0.0.1:8541/, :8542/, :8543/. In a fourth terminal, the stand-in phone (`--node N` = beacon N):
 
 ```powershell
 .venv\Scripts\python tools\dev_cli.py user new ann
 .venv\Scripts\python tools\dev_cli.py user new ben
-.venv\Scripts\python tools\dev_cli.py group new Friends --as ann --node 8441        # prints the invite
-.venv\Scripts\python tools\dev_cli.py group join "<invite>" --as ben --node 8443
-.venv\Scripts\python tools\dev_cli.py msg "meet at the bar" --as ann --node 8441
-.venv\Scripts\python tools\dev_cli.py pos 120 45 --as ben --node 8442
-.venv\Scripts\python tools\dev_cli.py show --node 8443                             # everything, from another node
-.venv\Scripts\python tools\dev_cli.py msg "evil" --as ann --tamper --node 8441     # refused: bad_group_sig
-.venv\Scripts\python tools\dev_cli.py status --node 8442                           # digest, counts, peers
+.venv\Scripts\python tools\dev_cli.py group new Friends --as ann --node 1           # prints the invite
+.venv\Scripts\python tools\dev_cli.py group join "<invite>" --as ben --node 3
+.venv\Scripts\python tools\dev_cli.py msg "meet at the bar" --as ann --node 2
+.venv\Scripts\python tools\dev_cli.py msg "members only" --as ben --encrypt --node 1
+.venv\Scripts\python tools\dev_cli.py pos 120 45 --as ben --node 2
+.venv\Scripts\python tools\dev_cli.py show --node 3                                # checks every signature, decrypts
+.venv\Scripts\python tools\dev_cli.py msg "evil" --as ann --tamper                 # refused: bad_group_sig
+.venv\Scripts\python tools\dev_cli.py msg "fake" --as ann --forge-as ben           # refused: bad_user_sig
 ```
 
-Open `http://127.0.0.1:8441/` for a node's status page (peers, groups, recent records; refreshes every second). Measure delivery time with `.venv\Scripts\python tools\latency.py --from 8441 --to 8443`.
+The operator (`tools/venue_ca.py`, keys in `data/local/venue/`):
 
-To test catching up, kill one node, post to another, and restart it with `.venv\Scripts\python -m beacon run --config data\local\node2.toml`. Its `status` digest matches the others within a gossip round.
+```powershell
+.venv\Scripts\python tools\venue_ca.py list                                        # certificates issued
+.venv\Scripts\python tools\venue_ca.py show data\local\node2\beacon.cert           # read and check one
+.venv\Scripts\python tools\venue_ca.py revoke 3 --node 1                           # beacon-3 is cut off
+```
 
-The node API (CBOR bodies): `POST /sync/digest`, `/sync/vectors`, `/sync/records` (gossip); `GET /status` (JSON); `GET /` (status page); `POST /dev/push`, `GET /dev/records?channel=<group id>`, `GET /dev/recent` (for the CLI and the page; recent shows who and what kind, never payloads).
+Other tools: `tools/latency.py --from 1 --to 3` (delivery time). `tools/run_local.py 3` runs all three in one terminal. `--mdns` makes the nodes also find each other by mDNS. Kill a node and restart it to watch it catch up.
+
+## Node API
+
+Peer API, mutual TLS, CBOR bodies: `POST /sync/digest`, `/sync/vectors`, `/sync/records`. Beacons may call all three; an operator certificate only `/sync/records`.
+
+Dev API, 127.0.0.1 only: `GET /` (status page), `GET /status` (JSON), `POST /dev/push`, `GET /dev/records?channel=<group id>`, `GET /dev/recent` (who and what kind, never payloads).

@@ -28,6 +28,9 @@ class PeerTable:
     def add(self, url: str) -> None:
         self._peers.setdefault(url, PeerState(url))
 
+    def remove(self, url: str) -> None:
+        self._peers.pop(url, None)
+
     def all(self) -> list[PeerState]:
         return list(self._peers.values())
 

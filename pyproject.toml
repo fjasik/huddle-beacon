@@ -12,6 +12,8 @@ dependencies = [
     "pynacl>=1.5",
     "cbor2>=5.6",
     "aiohttp>=3.9",
+    "cryptography>=42",
+    "zeroconf>=0.132",
 ]
 
 [project.optional-dependencies]

@@ -62,6 +62,31 @@ class GroupRecord:
     def record_id(self) -> RecordId:
         return (self.group_id, self.body.author, self.body.seq)
 
+    # The same names as VenueRecord, so the store and logs handle both kinds alike.
+    @property
+    def channel(self) -> bytes:
+        return self.group_id
+
+    @property
+    def signer(self) -> bytes:
+        return self.body.author
+
+    @property
+    def seq(self) -> int:
+        return self.body.seq
+
+    @property
+    def ts(self) -> int:
+        return self.body.ts
+
+    @property
+    def type_code(self) -> int:
+        return int(self.body.type)
+
+    @property
+    def type_name(self) -> str:
+        return self.body.type.name.lower()
+
     @property
     def wire(self) -> bytes:
         return encode_wire(self.body_bytes, self.sig_user, self.sig_group)

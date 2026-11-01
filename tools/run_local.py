@@ -1,10 +1,13 @@
-"""Run N beacon nodes on this machine, each seeded with all the others. Ctrl+C stops them all.
+"""Set up and run N beacon nodes on this machine.
 
-    python tools/run_local.py 3            # ports 8441, 8442, 8443; data in data/local/
-    python tools/run_local.py 3 --fresh    # wipe their databases first
+    python tools/run_local.py 3 --setup     # venue key, operator and 3 beacons with certificates; prints the commands
+                                            # to start each node in its own terminal (live logs per node)
+    python tools/run_local.py 3             # set up if needed, then run all 3 in this terminal; Ctrl+C stops them
+    python tools/run_local.py 3 --fresh     # throw away the venue, keys and databases first
 
-Each node is a separate process (`python -m beacon run --config data/local/nodeN.toml`), so a single one can be
-killed and restarted by hand: the config files stay in data/local/.
+Layout under data/local/: venue/ (the operator's venue key and CA), operator/ (operator certificate), nodeN/ (each
+beacon's key, certificates and database), nodeN.toml. Node N: peers over mutual TLS on 844N, status page and dev
+CLI on http://127.0.0.1:854N/.
 """
 
 from __future__ import annotations
@@ -17,41 +20,59 @@ import sys
 import time
 from pathlib import Path
 
+from beacon.trust.certs import Role
+from beacon.trust.provision import init_venue, load_venue, provision
+
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL = ROOT / "data" / "local"
 
 
-def write_configs(count: int, base_port: int, interval: float, venue_id: int) -> list[Path]:
-    LOCAL.mkdir(parents=True, exist_ok=True)
-    ports = [base_port + i for i in range(count)]
-    paths = []
-    for i, port in enumerate(ports, start=1):
-        peers = ", ".join(f'"http://127.0.0.1:{p}"' for p in ports if p != port)
+def setup(count: int, venue_id: int, interval: float, mdns: bool) -> list[Path]:
+    venue_dir = LOCAL / "venue"
+    venue = load_venue(venue_dir) if (venue_dir / "venue.key").exists() else init_venue(venue_dir, venue_id)
+    if not (LOCAL / "operator" / "operator.key").exists():
+        provision(venue, Role.OPERATOR, 1, LOCAL / "operator", ["127.0.0.1"])
+    configs = []
+    for i in range(1, count + 1):
+        node_dir = LOCAL / f"node{i}"
+        if not (node_dir / "beacon.key").exists():
+            provision(venue, Role.BEACON, i, node_dir, ["127.0.0.1", "localhost"])
+        seeds = ", ".join(f'"https://127.0.0.1:{8440 + j}"' for j in range(1, count + 1) if j != i)
         path = LOCAL / f"node{i}.toml"
         path.write_text(
-            f'beacon_id = {i}\nvenue_id = {venue_id}\nport = {port}\nhost = "127.0.0.1"\n'
-            f'data_dir = "node{i}"\npeers = [{peers}]\ngossip_interval_s = {interval}\n',
+            f"beacon_id = {i}\nvenue_id = {venue.venue_id}\nport = {8440 + i}\ndev_port = {8540 + i}\n"
+            f'host = "127.0.0.1"\ndata_dir = "node{i}"\npeers = [{seeds}]\n'
+            f'key_file = "node{i}/beacon.key"\ncert_file = "node{i}/beacon.crt"\n'
+            f'compact_cert_file = "node{i}/beacon.cert"\nca_file = "venue/venue-ca.crt"\n'
+            f'venue_pub_file = "venue/venue.pub"\nmdns = {"true" if mdns else "false"}\n'
+            f"gossip_interval_s = {interval}\n",
             encoding="utf-8",
         )
-        paths.append(path)
-    return paths
+        configs.append(path)
+    return configs
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("count", type=int, nargs="?", default=3)
-    parser.add_argument("--base-port", type=int, default=8441)
+    parser.add_argument("--setup", action="store_true", help="only set up, and print the per-terminal commands")
+    parser.add_argument("--fresh", action="store_true", help="delete the venue, keys and databases first")
     parser.add_argument("--interval", type=float, default=1.5, help="gossip interval in seconds")
     parser.add_argument("--venue", type=int, default=3)
-    parser.add_argument("--fresh", action="store_true", help="delete the nodes' data first")
+    parser.add_argument("--mdns", action="store_true", help="also find each other by mDNS")
     args = parser.parse_args()
 
     if args.fresh:
-        for i in range(1, args.count + 1):
-            shutil.rmtree(LOCAL / f"node{i}", ignore_errors=True)
-    configs = write_configs(args.count, args.base_port, args.interval, args.venue)
+        shutil.rmtree(LOCAL, ignore_errors=True)
+    configs = setup(args.count, args.venue, args.interval, args.mdns)
+    if args.setup:
+        print(f"venue, operator and {args.count} beacons ready in {LOCAL}. Start each node in its own terminal:")
+        for config in configs:
+            print(f"  .venv\\Scripts\\python -m beacon run --config {config.relative_to(ROOT)}")
+        return
+
     procs = [subprocess.Popen([sys.executable, "-m", "beacon", "run", "--config", str(c)], cwd=ROOT) for c in configs]
-    print(f"started {len(procs)} nodes on ports {args.base_port}..{args.base_port + args.count - 1}; Ctrl+C stops all")
+    print(f"started {len(procs)} nodes; Ctrl+C stops all")
     try:
         while any(p.poll() is None for p in procs):
             time.sleep(0.5)

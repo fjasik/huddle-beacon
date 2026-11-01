@@ -1,7 +1,14 @@
-"""The node's HTTP API: the sync endpoints peers call, status, and dev endpoints for the CLI (the stand-in phone)."""
+"""The node's two HTTP APIs.
+
+- Peer API (mutual TLS, `port`): the sync endpoints. Every caller is identified by its venue certificate; revoked
+  ones are refused. Beacons may call everything; the operator only /sync/records (to load revocations).
+- Dev API (plain HTTP, `dev_port`, bound to 127.0.0.1): the status page, /status, and the endpoints the dev CLI (the
+  stand-in phone) uses. Local only: phones reach beacons over BLE later, not HTTP.
+"""
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,13 +17,19 @@ from aiohttp import web
 
 from beacon.ingest import IngestResult
 from beacon.net import wire
+from beacon.records.codec import GroupRecord
 from beacon.sync import parse_vectors
+from beacon.trust.certs import CertError, PeerIdentity, Role, identity_of
 
 if TYPE_CHECKING:
     from beacon.node import Node
 
+log = logging.getLogger(__name__)
+
 STATUS_PAGE = (Path(__file__).parent / "status_page.html").read_text(encoding="utf-8")
 RECENT_LIMIT = 30
+OPERATOR_PATHS = frozenset({wire.RECORDS})
+PEER_KEY = web.RequestKey("peer", PeerIdentity)
 
 
 def _cbor(obj: Any) -> web.Response:
@@ -42,11 +55,41 @@ def _ingest_reply(result: IngestResult) -> dict[str, Any]:
     }
 
 
-def build_app(node: Node) -> web.Application:
-    engine = node.engine
+async def _take_records(node: Node, request: web.Request, source: str) -> web.Response:
+    body = await _body(request)
+    try:
+        wires = wire.wire_list(body.get("records"))
+    except ValueError as err:
+        raise web.HTTPBadRequest(text=str(err)) from err
+    return _cbor(_ingest_reply(node.engine.on_records(wires, source)))
 
-    def source(request: web.Request, fallback: str) -> str:
-        return request.headers.get(wire.FROM_HEADER, fallback)
+
+def build_peer_app(node: Node) -> web.Application:
+    engine = node.engine
+    seen: set[str] = set()
+    refused: set[str] = set()
+
+    @web.middleware
+    async def identify(request: web.Request, handler: Any) -> web.StreamResponse:
+        try:
+            peer = identity_of(request.transport.get_extra_info("ssl_object") if request.transport else None)
+        except CertError as err:
+            raise web.HTTPForbidden(text=str(err)) from err
+        if peer is None:
+            raise web.HTTPUnauthorized(text="a venue certificate is required")
+        if node.trust.is_revoked(peer.pub):
+            if peer.name not in refused:
+                refused.add(peer.name)
+                log.warning("REFUSED %s: its certificate is revoked", peer.name)
+            raise web.HTTPForbidden(text="revoked")
+        if peer.role is not Role.BEACON and request.path not in OPERATOR_PATHS:
+            raise web.HTTPForbidden(text=f"{peer.role.value} may not call {request.path}")
+        if peer.name not in seen:
+            seen.add(peer.name)
+            log.info("TLS peer %s verified (venue certificate, key %s)", peer.name, peer.pub.hex()[:8])
+        request[PEER_KEY] = peer
+        response: web.StreamResponse = await handler(request)
+        return response
 
     async def digest(request: web.Request) -> web.Response:
         body = await _body(request)
@@ -62,18 +105,16 @@ def build_app(node: Node) -> web.Application:
         return _cbor({"records": records, "vectors": mine})
 
     async def records(request: web.Request) -> web.Response:
-        return await _take_records(request, source(request, "unknown peer"))
+        return await _take_records(node, request, request[PEER_KEY].name)
 
+    app = web.Application(middlewares=[identify])
+    app.add_routes([web.post(wire.DIGEST, digest), web.post(wire.VECTORS, vectors), web.post(wire.RECORDS, records)])
+    return app
+
+
+def build_dev_app(node: Node) -> web.Application:
     async def dev_push(request: web.Request) -> web.Response:
-        return await _take_records(request, source(request, "dev"))
-
-    async def _take_records(request: web.Request, from_: str) -> web.Response:
-        body = await _body(request)
-        try:
-            wires = wire.wire_list(body.get("records"))
-        except ValueError as err:
-            raise web.HTTPBadRequest(text=str(err)) from err
-        return _cbor(_ingest_reply(engine.on_records(wires, from_)))
+        return await _take_records(node, request, request.headers.get(wire.FROM_HEADER, "cli"))
 
     async def dev_records(request: web.Request) -> web.Response:
         try:
@@ -92,10 +133,11 @@ def build_app(node: Node) -> web.Application:
             [
                 {
                     "arrived_s_ago": round((now - received) / 1000, 1),
-                    "group": r.group_id.hex(),
-                    "type": r.body.type.name.lower(),
-                    "author": r.body.author.hex(),
-                    "seq": r.body.seq,
+                    "channel": r.channel.hex(),
+                    "type": r.type_name,
+                    "signer": r.signer.hex(),
+                    "seq": r.seq,
+                    "enc": r.body.enc if isinstance(r, GroupRecord) else None,
                     "bytes": len(r.wire),
                 }
                 for r, received in node.store.recent(RECENT_LIMIT)
@@ -108,9 +150,6 @@ def build_app(node: Node) -> web.Application:
     app = web.Application()
     app.add_routes(
         [
-            web.post(wire.DIGEST, digest),
-            web.post(wire.VECTORS, vectors),
-            web.post(wire.RECORDS, records),
             web.post(wire.DEV_PUSH, dev_push),
             web.get(wire.DEV_RECORDS, dev_records),
             web.get(wire.STATUS, status),

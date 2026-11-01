@@ -50,7 +50,10 @@ def parse_vectors(obj: Any) -> Vectors:
 class PeerLink(Protocol):
     """The asking side's view of a peer. Each call is one request to it."""
 
-    name: str
+    @property
+    def name(self) -> str:
+        """For logs: who the peer is, as far as the link knows."""
+        ...
 
     async def digest(self, digest: bytes) -> bool: ...
 

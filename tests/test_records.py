@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from beacon.records import Body, GroupKeys, KeyPair, Reason, RecordType, Rejected, sign_record, validate_record
+from beacon.records.cipher import DecryptError, open_payload, seal
 from beacon.records.codec import encode_body, encode_wire, signed_message
 from beacon.records.keys import hkdf_sha256, verify
 from beacon.records.payloads import decode_payload, encode_payload
@@ -64,3 +67,23 @@ def test_a_member_cannot_post_as_another_member() -> None:
 def test_verify_never_raises_on_garbage() -> None:
     assert verify(b"short", b"m", b"s") is False
     assert verify(bytes(32), b"m", bytes(64)) is False
+
+
+def test_encrypting_hides_the_content_from_beacons_but_not_from_members() -> None:
+    ann, friends = KeyPair.generate(), GroupKeys.generate()
+    plain = Body(RecordType.MSG, friends.gpub, ann.pub, seq=1, ts=5, payload=encode_payload({"text": "secret"}))
+    record = sign_record(seal(plain, friends.enc_key), ann, friends)
+    checked = validate_record(record.wire)  # a beacon: both signatures OK, without the key
+    assert checked.body.enc == 1 and b"secret" not in record.wire
+    assert decode_payload(open_payload(checked.body, friends.enc_key)) == {"text": "secret"}
+    with pytest.raises(DecryptError):
+        open_payload(checked.body, GroupKeys.generate().enc_key)
+
+
+def test_ciphertext_cannot_be_moved_to_another_body() -> None:
+    """A member re-signs someone's ciphertext under a different seq: signatures pass, decryption does not."""
+    ann, friends = KeyPair.generate(), GroupKeys.generate()
+    sealed = seal(Body(RecordType.MSG, friends.gpub, ann.pub, 1, 5, encode_payload({"text": "hi"})), friends.enc_key)
+    moved = sign_record(dataclasses.replace(sealed, seq=2), ann, friends)
+    with pytest.raises(DecryptError):
+        open_payload(validate_record(moved.wire).body, friends.enc_key)
