@@ -42,6 +42,7 @@ class Node:
             interval_s=config.gossip_interval_s,
             fanout=config.gossip_fanout,
         )
+        self.ingest.subscribe(self.gossiper.on_new)
 
     def _client(self) -> aiohttp.ClientSession:
         if self._session is None:
@@ -49,6 +50,7 @@ class Node:
         return self._session
 
     async def start(self, gossip: bool = True) -> None:
+        """`gossip=False` leaves out the periodic rounds (tests drive them with tick()); pushes still happen."""
         self._runner = web.AppRunner(build_app(self), access_log=None)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.config.host, self.config.port)
@@ -68,6 +70,7 @@ class Node:
     async def stop(self) -> None:
         if self._gossip_task:
             self._gossip_task.cancel()
+        await self.gossiper.settle()
         if self._runner:
             await self._runner.cleanup()
         if self._session:

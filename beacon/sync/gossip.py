@@ -1,4 +1,9 @@
-"""The gossip loop: every interval, a sync round with a few random peers that are not backing off."""
+"""Gossip: new records are pushed to every ready peer at once; every interval, a sync round with a few random peers
+repairs anything a push missed (a peer that was down, a lost request).
+
+A pushed record reaches each peer in one hop. A peer that takes it in as new pushes it on too, so the others get a
+few duplicates (ignored); that is the price of not tracking who has what. Fine at prototype scale; cap later.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 
+from beacon.records import GroupRecord
 from beacon.sync.engine import PeerLink, SyncEngine
 from beacon.sync.peers import PeerTable
 
@@ -26,6 +32,27 @@ class Gossiper:
         self._link_to = link_to
         self._interval_s = interval_s
         self._fanout = fanout
+        self._pushes: set[asyncio.Task[None]] = set()
+
+    def on_new(self, records: list[GroupRecord], source: str) -> None:
+        """Ingest listener: push genuinely new records to every ready peer, without waiting for the next round."""
+        wires = [r.wire for r in records]
+        for peer in self._peers.ready():
+            task = asyncio.create_task(self._push_to(peer.url, wires))
+            self._pushes.add(task)  # keep a reference until done, or the task may be collected
+            task.add_done_callback(self._pushes.discard)
+
+    async def settle(self) -> None:
+        """Wait for pushes under way (tests, shutdown)."""
+        while self._pushes:
+            await asyncio.gather(*self._pushes, return_exceptions=True)
+
+    async def _push_to(self, url: str, wires: list[bytes]) -> None:
+        try:
+            await self._link_to(url).records(wires)
+        except Exception as err:  # the next rounds repair it once the peer answers again
+            if self._peers.mark_failed(url) == 1:
+                log.info("peer %s unreachable (%s), backing off", url, type(err).__name__)
 
     async def run(self) -> None:
         while True:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
@@ -12,6 +14,9 @@ from beacon.sync import parse_vectors
 
 if TYPE_CHECKING:
     from beacon.node import Node
+
+STATUS_PAGE = (Path(__file__).parent / "status_page.html").read_text(encoding="utf-8")
+RECENT_LIMIT = 30
 
 
 def _cbor(obj: Any) -> web.Response:
@@ -80,6 +85,26 @@ def build_app(node: Node) -> web.Application:
     async def status(_: web.Request) -> web.Response:
         return web.json_response(node.status())
 
+    async def dev_recent(_: web.Request) -> web.Response:
+        """The last records taken in, for the status page: who and what kind, never the payload."""
+        now = time.time() * 1000
+        return web.json_response(
+            [
+                {
+                    "arrived_s_ago": round((now - received) / 1000, 1),
+                    "group": r.group_id.hex(),
+                    "type": r.body.type.name.lower(),
+                    "author": r.body.author.hex(),
+                    "seq": r.body.seq,
+                    "bytes": len(r.wire),
+                }
+                for r, received in node.store.recent(RECENT_LIMIT)
+            ]
+        )
+
+    async def page(_: web.Request) -> web.Response:
+        return web.Response(text=STATUS_PAGE, content_type="text/html")
+
     app = web.Application()
     app.add_routes(
         [
@@ -89,6 +114,8 @@ def build_app(node: Node) -> web.Application:
             web.post(wire.DEV_PUSH, dev_push),
             web.get(wire.DEV_RECORDS, dev_records),
             web.get(wire.STATUS, status),
+            web.get(wire.DEV_RECENT, dev_recent),
+            web.get("/", page),
         ]
     )
     return app

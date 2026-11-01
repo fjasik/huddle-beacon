@@ -134,6 +134,13 @@ class Store:
         rows = self._db.execute("SELECT wire FROM records WHERE channel = ? ORDER BY ts, signer, seq", (channel,))
         return [decode_record(row[0]) for row in rows]
 
+    def recent(self, limit: int) -> list[tuple[GroupRecord, int]]:
+        """The last records taken in, newest first, with the local time each arrived (ms)."""
+        rows = self._db.execute(
+            "SELECT wire, received FROM records ORDER BY received DESC, rowid DESC LIMIT ?", (limit,)
+        )
+        return [(decode_record(wire), received) for wire, received in rows]
+
     def count(self) -> int:
         return int(self._db.execute("SELECT COUNT(*) FROM records").fetchone()[0])
 

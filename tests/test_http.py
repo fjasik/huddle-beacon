@@ -95,3 +95,25 @@ async def test_unreachable_peer_backs_off_and_status_shows_it(tmp_path: Path) ->
         assert status["peers"][0]["up"] is False and status["peers"][0]["failures"] == 1
     finally:
         await node.stop()
+
+
+async def test_new_records_are_pushed_to_every_peer_without_waiting_for_a_round(three: list[Node]) -> None:
+    a, b, c = three
+    group = GroupKeys.generate()
+    await post(a, wire.DEV_PUSH, {"records": [Member(group).write(text="now").wire]})
+    for node in three:
+        await node.gossiper.settle()  # pushes, and the pushes they trigger; no tick() at all
+    assert b.store.count() == c.store.count() == 1
+
+
+async def test_status_page_and_recent_records(three: list[Node]) -> None:
+    a = three[0]
+    record = Member(GroupKeys.generate()).write(text="secret")
+    await post(a, wire.DEV_PUSH, {"records": [record.wire]})
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"http://127.0.0.1:{a.port}/") as response:
+            assert response.status == 200 and "Huddle beacon" in await response.text()
+        async with session.get(f"http://127.0.0.1:{a.port}{wire.DEV_RECENT}") as response:
+            recent = await response.json()
+    assert recent[0]["type"] == "msg" and recent[0]["seq"] == 1 and recent[0]["bytes"] == len(record.wire)
+    assert "secret" not in str(recent)  # never the payload

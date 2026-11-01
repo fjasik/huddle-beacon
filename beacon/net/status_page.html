@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Huddle beacon</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; background: #111; color: #ddd; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #888; margin-bottom: 16px; }
+  table { border-collapse: collapse; margin-bottom: 20px; }
+  td, th { padding: 3px 12px 3px 0; text-align: left; font-variant-numeric: tabular-nums; }
+  th { color: #888; font-weight: normal; }
+  .up { color: #3c3; } .down { color: #e55; }
+  code { color: #9cf; }
+</style>
+<h1 id="title">Huddle beacon</h1>
+<div class="sub" id="sub">loading…</div>
+<h2>Peers</h2>
+<table><thead><tr><th>Peer</th><th>State</th><th>Last answer</th><th>Failures</th></tr></thead><tbody id="peers"></tbody></table>
+<h2>Groups</h2>
+<table><thead><tr><th>Group</th><th>Members writing</th><th>Records</th></tr></thead><tbody id="groups"></tbody></table>
+<h2>Recent records</h2>
+<table><thead><tr><th>Arrived</th><th>Group</th><th>Type</th><th>Author</th><th>Seq</th><th>Bytes</th></tr></thead><tbody id="recent"></tbody></table>
+<script>
+  const rows = (id, items, cells) => {
+    document.getElementById(id).innerHTML = items.map((i) => `<tr>${cells(i).map((c) => `<td>${c}</td>`).join("")}</tr>`).join("");
+  };
+  const ago = (s) => (s === null ? "never" : `${s.toFixed(1)} s ago`);
+  async function refresh() {
+    try {
+      const [status, recent] = await Promise.all([fetch("/status").then((r) => r.json()), fetch("/dev/recent").then((r) => r.json())]);
+      document.getElementById("title").textContent = `${status.beacon} (venue ${status.venue_id})`;
+      document.getElementById("sub").innerHTML =
+        `${status.records} records · digest <code>${status.digest}</code> · ${status.conflicts} conflicts · up ${status.uptime_s} s`;
+      rows("peers", status.peers, (p) => [p.url, p.up ? '<span class="up">up</span>' : '<span class="down">down</span>', ago(p.last_ok_s_ago), p.failures]);
+      rows("groups", Object.entries(status.groups), ([id, g]) => [`<code>${id.slice(0, 8)}…</code>`, g.members_writing, g.held]);
+      rows("recent", recent, (r) => [ago(r.arrived_s_ago), `<code>${r.group.slice(0, 8)}…</code>`, r.type, `<code>${r.author.slice(0, 8)}…</code>`, r.seq, r.bytes]);
+    } catch (e) {
+      document.getElementById("sub").textContent = `not answering (${e})`;
+    }
+  }
+  refresh();
+  setInterval(refresh, 1000);
+</script>

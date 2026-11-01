@@ -50,6 +50,8 @@ Terminal 2, the stand-in phone (`tools/dev_cli.py`; keys and seeds in `data/cli/
 .venv\Scripts\python tools\dev_cli.py status --node 8442                           # digest, counts, peers
 ```
 
+Open `http://127.0.0.1:8441/` for a node's status page (peers, groups, recent records; refreshes every second). Measure delivery time with `.venv\Scripts\python tools\latency.py --from 8441 --to 8443`.
+
 To test catching up, kill one node, post to another, and restart it with `.venv\Scripts\python -m beacon run --config data\local\node2.toml`. Its `status` digest matches the others within a gossip round.
 
-The node API (CBOR bodies): `POST /sync/digest`, `/sync/vectors`, `/sync/records` (gossip); `GET /status` (JSON); `POST /dev/push` and `GET /dev/records?channel=<group id>` (for the CLI).
+The node API (CBOR bodies): `POST /sync/digest`, `/sync/vectors`, `/sync/records` (gossip); `GET /status` (JSON); `GET /` (status page); `POST /dev/push`, `GET /dev/records?channel=<group id>`, `GET /dev/recent` (for the CLI and the page; recent shows who and what kind, never payloads).

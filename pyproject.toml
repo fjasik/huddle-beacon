@@ -25,6 +25,9 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["beacon*"]
 
+[tool.setuptools.package-data]
+"beacon.net" = ["*.html"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py311"

@@ -16,6 +16,7 @@ RECORDS = "/sync/records"
 STATUS = "/status"
 DEV_PUSH = "/dev/push"
 DEV_RECORDS = "/dev/records"
+DEV_RECENT = "/dev/recent"
 
 
 def dumps(obj: Any) -> bytes:
