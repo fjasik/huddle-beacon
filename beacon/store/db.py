@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -129,6 +130,42 @@ class Store:
                 )
                 out.extend(row[0] for row in rows)
         return out
+
+    def page_after(
+        self,
+        theirs: dict[Channel, Vector],
+        budget_bytes: int,
+        after: tuple[Channel, bytes, int] | None = None,
+        skip: Callable[[Channel, int, int], bool] | None = None,
+    ) -> tuple[list[bytes], tuple[Channel, bytes, int] | None]:
+        """One page of what a phone with these vectors lacks, in its channels only, in (channel, signer, seq) order.
+
+        Returns the wires and a cursor (the last record sent) when more remain, else None. `after` continues from a
+        previous cursor, so the caller never has to change `theirs` between pages. `skip(channel, type, ts)` leaves
+        records out (old positions, the venue channel's roster). A page always holds at least one record."""
+        out: list[bytes] = []
+        size = 0
+        last: tuple[Channel, bytes, int] | None = None
+        for channel in sorted(theirs):
+            for signer in sorted(self._state.get(channel, {})):
+                if after is not None and (channel, signer) < after[:2]:
+                    continue
+                floor = theirs[channel].get(signer, 0)
+                if after is not None and (channel, signer) == after[:2]:
+                    floor = max(floor, after[2])
+                rows = self._db.execute(
+                    "SELECT seq, type, ts, wire FROM records WHERE channel = ? AND signer = ? AND seq > ? ORDER BY seq",
+                    (channel, signer, floor),
+                )
+                for seq, type_code, ts, wire in rows:
+                    if skip is not None and skip(channel, type_code, ts):
+                        continue
+                    if out and size + len(wire) > budget_bytes:
+                        return out, last
+                    out.append(wire)
+                    size += len(wire)
+                    last = (channel, signer, seq)
+        return out, None
 
     def list_channel(self, channel: Channel) -> list[AnyRecord]:
         rows = self._db.execute("SELECT wire FROM records WHERE channel = ? ORDER BY ts, signer, seq", (channel,))

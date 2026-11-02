@@ -1,7 +1,8 @@
 """The one way records enter a node: check, store, tell the listeners about the new ones.
 
-Every front end uses it: peers (gossip), the dev push endpoint now, phones over BLE later. Listeners are called
-synchronously with the genuinely new records only, and must not block (the gossiper schedules its pushes as tasks).
+Every front end uses it: peers (gossip), phones (beacon/phone, any transport) and the dev push endpoint. Listeners
+are called synchronously with the genuinely new records only, and must not block (the gossiper schedules its pushes
+as tasks).
 Each check is logged, so a record can be followed from node to node.
 """
 
