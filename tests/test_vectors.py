@@ -12,6 +12,7 @@ import pytest
 from beacon.records import GroupKeys, KeyPair, Rejected, validate_record
 from beacon.records.any import validate_any
 from beacon.records.cipher import DecryptError, aad_of, open_payload
+from beacon.records.invite import Invite, InviteError, decode_invite, encode_invite
 from beacon.records.keys import hkdf_sha256
 from beacon.records.venue import VenueRecord
 from beacon.trust.certs import CertError, verify_compact
@@ -120,3 +121,14 @@ def test_venue_record(case: dict[str, Any]) -> None:
         with pytest.raises(Rejected) as refused:
             validate_any(bytes.fromhex(case["wire"]), venue)
         assert refused.value.reason.value == case["reason"]
+
+
+@pytest.mark.parametrize("case", VECTORS["invites"], ids=lambda c: c["name"])
+def test_invite(case: dict[str, Any]) -> None:
+    if case["valid"]:
+        invite = decode_invite(case["invite"])
+        assert (invite.venue_id, invite.seed.hex()) == (case["venue_id"], case["seed"])
+        assert encode_invite(Invite(invite.venue_id, invite.seed)).endswith(case["invite"])
+    else:
+        with pytest.raises(InviteError):
+            decode_invite(case["invite"])

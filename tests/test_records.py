@@ -9,6 +9,7 @@ import pytest
 from beacon.records import Body, GroupKeys, KeyPair, Reason, RecordType, Rejected, sign_record, validate_record
 from beacon.records.cipher import DecryptError, open_payload, seal
 from beacon.records.codec import encode_body, encode_wire, signed_message
+from beacon.records.invite import ALPHABET, PREFIX, Invite, InviteError, decode_invite, encode_invite
 from beacon.records.keys import hkdf_sha256, verify
 from beacon.records.payloads import decode_payload, encode_payload
 
@@ -87,3 +88,21 @@ def test_ciphertext_cannot_be_moved_to_another_body() -> None:
     moved = sign_record(dataclasses.replace(sealed, seq=2), ann, friends)
     with pytest.raises(DecryptError):
         open_payload(validate_record(moved.wire).body, friends.enc_key)
+
+
+@pytest.mark.parametrize("venue_id", [0, 1, 3, 65535])
+def test_invite_round_trips_and_is_plain_alphanumeric(venue_id: int) -> None:
+    for _ in range(50):
+        invite = Invite(venue_id, GroupKeys.generate().seed)
+        link = encode_invite(invite)
+        code = link.removeprefix(PREFIX)
+        assert link.startswith(PREFIX) and set(code) <= set(ALPHABET) and 45 <= len(code) <= 51
+        assert decode_invite(link) == invite
+        assert decode_invite(f"  {code}\n") == invite
+
+
+def test_invite_refuses_a_bad_seed_or_venue() -> None:
+    with pytest.raises(InviteError):
+        encode_invite(Invite(3, bytes(31)))
+    with pytest.raises(InviteError):
+        encode_invite(Invite(65536, bytes(32)))

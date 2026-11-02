@@ -45,7 +45,8 @@ Status pages: http://127.0.0.1:8541/, :8542/, :8543/. In a fourth terminal, the 
 .venv\Scripts\python tools\dev_cli.py user new ann
 .venv\Scripts\python tools\dev_cli.py user new ben
 .venv\Scripts\python tools\dev_cli.py group new Friends --as ann --node 1           # prints the invite
-.venv\Scripts\python tools\dev_cli.py group join "<invite>" --as ben --node 3
+.venv\Scripts\python tools\dev_cli.py group join "<invite>" --as ben --node 3     # huddle://join/<code>
+.venv\Scripts\python tools\dev_cli.py group join "<invite>" --as ben --name benny  # joining again renames
 .venv\Scripts\python tools\dev_cli.py msg "meet at the bar" --as ann --node 2
 .venv\Scripts\python tools\dev_cli.py msg "members only" --as ben --encrypt --node 1
 .venv\Scripts\python tools\dev_cli.py pos 120 45 --as ben --node 2

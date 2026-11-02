@@ -364,5 +364,48 @@
       "reason": "bad_venue_sig",
       "revoked": []
     }
+  ],
+  "invites": [
+    {
+      "name": "friends at venue 3",
+      "invite": "huddle://join/2wkUxVM2AdhTyhDvgXP6vQyx7YpjhYWbyokr5yPzcZww4BJWKP",
+      "valid": true,
+      "venue_id": 3,
+      "seed": "1010101010101010101010101010101010101010101010101010101010101010"
+    },
+    {
+      "name": "others at venue 65535",
+      "invite": "huddle://join/4tVGQMt6YShtqJMSXoRUgfKbN885Q2dvYyC7J2VCj2eswwdxT2",
+      "valid": true,
+      "venue_id": 65535,
+      "seed": "2020202020202020202020202020202020202020202020202020202020202020"
+    },
+    {
+      "name": "the bare code, without the prefix",
+      "invite": "2wkUxVM2AdhTyhDvgXP6vQyx7YpjhYWbyokr5yPzcZww4BJWKP",
+      "valid": true,
+      "venue_id": 3,
+      "seed": "1010101010101010101010101010101010101010101010101010101010101010"
+    },
+    {
+      "name": "one character changed",
+      "invite": "huddle://join/2wkUxVM2Ad2TyhDvgXP6vQyx7YpjhYWbyokr5yPzcZww4BJWKP",
+      "valid": false
+    },
+    {
+      "name": "cut off",
+      "invite": "huddle://join/2wkUxVM2AdhTyhDvgXP6vQyx7YpjhYWbyokr5yPzcZww4",
+      "valid": false
+    },
+    {
+      "name": "character outside the alphabet",
+      "invite": "huddle://join/2wkUxVM2AdhTyhDvgXP6vQyx7YpjhYWbyokr5yPzcZww4BJWK0",
+      "valid": false
+    },
+    {
+      "name": "unknown version",
+      "invite": "huddle://join/4tVfBwNsbJvboGvqG9P4F1ksEAYPQPPPcss6EfHzGaLRgFHGyK",
+      "valid": false
+    }
   ]
 }

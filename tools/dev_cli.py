@@ -4,6 +4,7 @@ user and as the group), shows exactly what it signs, and checks every signature 
     python tools/dev_cli.py user new ann
     python tools/dev_cli.py group new Friends --as ann --node 1      # prints the invite
     python tools/dev_cli.py group join "<invite>" --as ben --node 3
+    python tools/dev_cli.py group join "<invite>" --as ben --name benny   # joining again renames you
     python tools/dev_cli.py msg "meet at the bar" --as ann --node 1
     python tools/dev_cli.py msg "for members only" --as ann --encrypt --node 2
     python tools/dev_cli.py pos 120 45 --as ben --node 2
@@ -34,6 +35,7 @@ import cbor2
 from beacon.records import Body, GroupKeys, KeyPair, RecordType, Rejected, sign_record, validate_record
 from beacon.records.cipher import DecryptError, open_payload, seal
 from beacon.records.codec import GroupRecord, encode_body, encode_wire, signed_message
+from beacon.records.invite import Invite, InviteError, decode_invite, encode_invite
 from beacon.records.payloads import decode_payload, encode_payload
 
 STATE = Path(__file__).resolve().parent.parent / "data" / "cli" / "state.json"
@@ -45,8 +47,9 @@ STATE = Path(__file__).resolve().parent.parent / "data" / "cli" / "state.json"
 def load() -> dict[str, Any]:
     if STATE.exists():
         state: dict[str, Any] = json.loads(STATE.read_text(encoding="utf-8"))
+        state.setdefault("joined", {})
         return state
-    return {"users": {}, "groups": {}, "seq": {}, "last_group": None}
+    return {"users": {}, "groups": {}, "seq": {}, "joined": {}, "last_group": None}
 
 
 def save(state: dict[str, Any]) -> None:
@@ -82,9 +85,19 @@ def next_seq(state: dict[str, Any], user: str, group: str) -> int:
     return int(state["seq"][key])
 
 
-def invite_for(name: str, group: GroupKeys, venue: int = 3) -> str:
-    seed = base64.urlsafe_b64encode(group.seed).rstrip(b"=").decode()
-    return f"huddle://join?v=1&venue={venue}&seed={seed}&name={urllib.parse.quote(name)}"
+def invite_for(group: GroupKeys, venue: int = 3) -> str:
+    return encode_invite(Invite(venue, group.seed))
+
+
+def read_invite(text: str) -> bytes:
+    """The group seed from an invite; also reads the old `huddle://join?...&seed=...` links."""
+    if "?" in text:
+        seed_b64 = urllib.parse.parse_qs(urllib.parse.urlparse(text).query)["seed"][0]
+        return base64.urlsafe_b64decode(seed_b64 + "=" * (-len(seed_b64) % 4))
+    try:
+        return decode_invite(text).seed
+    except InviteError as err:
+        fail(f"can't read the invite: {err}")
 
 
 def short(data: bytes, n: int = 8) -> str:
@@ -170,25 +183,48 @@ def cmd_group_new(state: dict[str, Any], args: argparse.Namespace) -> None:
         write(state, args.user, args.name, RecordType.JOIN, {"name": args.user}),
     ]
     push(args.node, [r.wire for r in records])
-    print(f"invite (anyone with it can join): {invite_for(args.name, keys)}")
+    state["joined"][f"{args.user}/{args.name}"] = args.user
+    print(f"invite (anyone with it can join): {invite_for(keys)}")
+
+
+def group_title(node: str, keys: GroupKeys) -> str | None:
+    """The group's name, from its group record (checked and, if needed, decrypted here)."""
+    for wire in call(node, f"/dev/records?channel={keys.group_id.hex()}")["records"]:
+        try:
+            record = validate_record(wire)
+            if record.body.type == RecordType.GROUP:
+                return str(decode_payload(open_payload(record.body, keys.enc_key)).get("name"))
+        except (Rejected, DecryptError):
+            continue
+    return None
 
 
 def cmd_group_join(state: dict[str, Any], args: argparse.Namespace) -> None:
-    query = urllib.parse.parse_qs(urllib.parse.urlparse(args.invite).query)
-    seed_b64 = query["seed"][0]
-    seed = base64.urlsafe_b64decode(seed_b64 + "=" * (-len(seed_b64) % 4))
+    seed = read_invite(args.invite)
+    keys = GroupKeys(seed)
+    print(f"invite read: keys derived from the seed: group key {short(keys.gpub)}..., group id {short(keys.group_id)}")
     known = {s: n for n, s in state["groups"].items()}
-    name = known.get(seed.hex(), query.get("name", ["group"])[0])
+    name = known.get(seed.hex())
+    if name is None:
+        title = group_title(args.node, keys) or f"group-{short(keys.group_id)}"
+        name = title if title not in state["groups"] else f"{title}-{short(keys.group_id)}"
+        print(f"group name read from the group record on node {args.node}: {name}")
     state["groups"][name] = seed.hex()
     state["last_group"] = name
-    keys = GroupKeys(seed)
-    print(f"invite read: group {name}; keys derived from the seed: group key {short(keys.gpub)}...")
-    push(args.node, [write(state, args.user, name, RecordType.JOIN, {"name": args.user}).wire])
+    display = args.display or args.user
+    current = state["joined"].get(f"{args.user}/{name}")
+    if current == display:
+        print(f"{args.user} is already a member of {name} as '{display}'; nothing written")
+        return
+    if current is not None:
+        print(f"{args.user} is already a member of {name}; joining again renames '{current}' to '{display}'")
+    push(args.node, [write(state, args.user, name, RecordType.JOIN, {"name": display}).wire])
+    state["joined"][f"{args.user}/{name}"] = display
 
 
 def cmd_invite(state: dict[str, Any], args: argparse.Namespace) -> None:
     name = group_name(state, args.group)
-    print(invite_for(name, GroupKeys(bytes.fromhex(state["groups"][name]))))
+    print(invite_for(GroupKeys(bytes.fromhex(state["groups"][name]))))
 
 
 def cmd_msg(state: dict[str, Any], args: argparse.Namespace) -> None:
@@ -240,8 +276,14 @@ def cmd_show(state: dict[str, Any], args: argparse.Namespace) -> None:
             print(f"  REFUSED  {err}")
             continue
         verified.append((record, fields))
-    names = {r.body.author: f.get("name", "?") for r, f in verified if r.body.type == RecordType.JOIN}
-    left = {r.body.author for r, _ in verified if r.body.type == RecordType.LEAVE}
+    joins = sorted(((r, f) for r, f in verified if r.body.type == RecordType.JOIN), key=lambda rf: rf[0].body.ts)
+    names = {r.body.author: f.get("name", "?") for r, f in joins}  # the latest join names the member
+    joined_at = {r.body.author: r.body.ts for r, _ in joins}
+    left = {
+        r.body.author
+        for r, _ in verified
+        if r.body.type == RecordType.LEAVE and r.body.ts > joined_at.get(r.body.author, 0)
+    }
 
     def who(author: bytes) -> str:
         return str(names.get(author, short(author)))
@@ -298,6 +340,7 @@ def main() -> None:
     new.add_argument("name")
     join = groups.add_parser("join")
     join.add_argument("invite")
+    join.add_argument("--name", dest="display", help="the name others see (default: the user's); rejoin to rename")
     for p, fn in ((new, cmd_group_new), (join, cmd_group_join)):
         p.set_defaults(fn=fn)
         p.add_argument("--as", dest="user", required=True)

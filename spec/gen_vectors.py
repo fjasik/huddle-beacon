@@ -7,6 +7,7 @@ again gives the same file; a test checks that. Run: `python spec/gen_vectors.py`
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ import cbor2
 
 from beacon.records.cipher import aad_of, seal
 from beacon.records.codec import Body, RecordType, encode_wire, sign_record, signed_message
+from beacon.records.invite import PREFIX, Invite, b58encode, encode_invite
 from beacon.records.keys import GROUP_ENC_INFO, GROUP_SIGN_INFO, GroupKeys, KeyPair, hkdf_sha256
 from beacon.records.payloads import encode_payload
 from beacon.records.validate import Reason
@@ -148,7 +150,31 @@ def build_vectors() -> dict[str, Any]:
         ],
         "certs": cert_cases(),
         "venue_records": venue_cases(),
+        "invites": invite_cases(),
     }
+
+
+def invite_cases() -> list[dict[str, Any]]:
+    """Valid invites (seed and venue in, link out) and links that must be refused."""
+    friends = encode_invite(Invite(3, FRIENDS.seed))
+    code = friends.removeprefix(PREFIX)
+    typo = code[:10] + ("2" if code[10] != "2" else "3") + code[11:]
+    v2 = bytes([2]) + (3).to_bytes(2, "big") + FRIENDS.seed
+    wrong_version = PREFIX + b58encode(v2 + hashlib.sha256(v2).digest()[:2])  # valid checksum, unknown version
+    valid = [
+        ("friends at venue 3", friends, 3, FRIENDS),
+        ("others at venue 65535", encode_invite(Invite(65535, OTHERS.seed)), 65535, OTHERS),
+        ("the bare code, without the prefix", code, 3, FRIENDS),
+    ]
+    invalid = [
+        ("one character changed", PREFIX + typo),
+        ("cut off", friends[:-5]),
+        ("character outside the alphabet", friends[:-1] + "0"),
+        ("unknown version", wrong_version),
+    ]
+    return [{"name": n, "invite": i, "valid": True, "venue_id": v, "seed": g.seed.hex()} for n, i, v, g in valid] + [
+        {"name": n, "invite": i, "valid": False} for n, i in invalid
+    ]
 
 
 def encrypted_cases() -> list[dict[str, Any]]:

@@ -9,7 +9,7 @@ Bytes are raw in CBOR and hex in `vectors.json`. Integers are CBOR integers, and
 | Key | How it is made |
 |---|---|
 | User | Ed25519 key pair, random, made on the phone. The 32-byte public key is the user's ID (`author`). |
-| Group seed | 32 random bytes. It is the invite: anyone who has it can join. |
+| Group seed | 32 random bytes, carried in the invite (see Invites): anyone who has it can join. |
 | Group signing key | Ed25519 key pair whose 32-byte seed is `HKDF-SHA256(ikm = group seed, salt = none, info = "huddle/v1/group-sign", length = 32)`. Its public key is `gpub`. |
 | Group encryption key | `HKDF-SHA256(group seed, info = "huddle/v1/group-enc", length = 32)`. Used once `enc = 1` (XChaCha20-Poly1305). |
 | Group ID | `SHA-256(gpub)[:16]` |
@@ -51,6 +51,26 @@ Both signatures cover the body bytes **exactly as sent**. A receiver never re-en
 | 6 | pin | `pin_id`, `x`, `y`, `kind`, `label`, `deleted` |
 
 A record is identified by `(group ID, author, seq)`.
+
+## Members
+
+Phones work out membership from the records; beacons never do.
+
+- A user is a member when they have a `join` that is newer (by `ts`) than their latest `leave`.
+- Their display name is the `name` in their latest `join`. Joining again is legal, and is how a member renames themselves.
+- A phone writes a `join` only when its own log has none for the group, or to rename. A repeated join with the same name is harmless but wastes a record.
+- The group's name is the `name` in its `group` record (the first one, written by its creator).
+
+## Invites
+
+An invite is an opaque link: `huddle://join/<code>`, where
+
+```
+code = base58( version: 1 byte (= 1) ‖ venue ID: 2 bytes, big-endian ‖ group seed: 32 bytes ‖ checksum: 2 bytes )
+checksum = SHA-256(version ‖ venue ID ‖ seed)[:2]
+```
+
+Base58 uses Bitcoin's alphabet (`1-9 A-Z a-z` without `0 O I l`), with leading zero bytes written as `1`. A code is 50 characters. Readers accept the code with or without the prefix, and refuse it if a character is outside the alphabet, the length is wrong, the version is unknown or the checksum doesn't match. The group's name is not in the invite; the joiner reads it from the group record. Opaque isn't secret: anyone who has the invite can join. The `invites` vectors give valid and refused cases.
 
 ## Validation
 
