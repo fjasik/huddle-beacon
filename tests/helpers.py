@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from beacon.config import Config
+from beacon.connect import BeaconConnector
 from beacon.ingest import Ingest
 from beacon.phone.hub import PhoneHub
 from beacon.phone.pipe import PhonePipe
@@ -145,3 +146,35 @@ def make_beacon(limits: Limits | None = None, venue: KeyPair | None = None) -> B
     ingest.subscribe(trust.listener)
     ingest.subscribe(hub.on_new)
     return Beacon(venue, key, cert, store, trust, ingest, hub)
+
+
+class LoopbackConnector(BeaconConnector):
+    """A phone connected to an in-memory beacon: the connector's protocol over the loopback transport."""
+
+    transport = "loop"
+
+    def __init__(self, beacon: Beacon, venue_pub: bytes | None = None, venue_id: int = 3, **kwargs: Any) -> None:
+        super().__init__(venue_pub or beacon.venue.pub, venue_id, **kwargs)
+        self._beacon = beacon
+        self._to_beacon: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._from_beacon: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._serving: asyncio.Task[None] | None = None
+
+    @property
+    def target(self) -> str:
+        return "loopback beacon"
+
+    async def _open(self) -> None:
+        pipe = LoopbackPipe(self._to_beacon, self._from_beacon)
+        self._serving = asyncio.create_task(self._beacon.hub.serve(pipe))
+
+    async def _send(self, data: bytes) -> None:
+        await self._to_beacon.put(data)
+
+    async def _recv(self) -> bytes | None:
+        return await self._from_beacon.get()
+
+    async def _close(self) -> None:
+        await self._to_beacon.put(None)
+        if self._serving is not None:
+            await self._serving
