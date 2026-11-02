@@ -76,6 +76,8 @@ class BeaconConnector(ABC):
         self.is_revoked = is_revoked
         self.timeout_s = timeout_s
         self.info: BeaconInfo | None = None
+        self.hello_nonce = b""
+        """the nonce the beacon signed at connect, for logs"""
         self.on_records: RecordsCallback | None = None
         self.on_resync: Callable[[], None] | None = None
         self._clock = clock
@@ -111,7 +113,7 @@ class BeaconConnector(ABC):
         """Open the connection, send hello with a fresh nonce and check the reply. Raises BeaconRefused."""
         await self._open()
         self._reader = asyncio.create_task(self._read())
-        nonce = os.urandom(p.NONCE_LEN)
+        nonce = self.hello_nonce = os.urandom(p.NONCE_LEN)
         try:
             reply = await self.request(p.Op.HELLO, {"v": p.VERSION, "nonce": nonce})
             self.info = p.check_hello(reply, nonce, self.venue_pub, self.venue_id, int(self._clock()), self.is_revoked)
