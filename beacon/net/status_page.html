@@ -17,6 +17,9 @@
 <div class="sub" id="identity"></div>
 <h2>Peers (mutual TLS)</h2>
 <table><thead><tr><th>Peer</th><th>Certificate</th><th>State</th><th>Last answer</th><th>Failures</th></tr></thead><tbody id="peers"></tbody></table>
+<h2>Phones</h2>
+<div class="sub" id="listeners"></div>
+<table><thead><tr><th>Phone</th><th>From</th><th>Connected</th><th>Hello</th><th>Watching</th><th>Pushed</th><th>Events sent</th><th>Resyncs</th></tr></thead><tbody id="phones"></tbody></table>
 <h2>Roster (venue channel)</h2>
 <table><thead><tr><th>Beacon</th><th>Address</th><th>Key</th></tr></thead><tbody id="roster"></tbody></table>
 <div class="sub warn" id="revoked"></div>
@@ -38,6 +41,12 @@
       document.getElementById("sub").innerHTML = `${s.records} records · digest <code>${s.digest}</code> · ${s.conflicts} conflicts · up ${s.uptime_s} s`;
       document.getElementById("identity").innerHTML = `key ${hex(s.key)} · peers reach it at <code>${s.url}</code>`;
       rows("peers", s.peers, (p) => [p.url, p.name || "?", p.up ? '<span class="up">up</span>' : '<span class="down">down</span>', ago(p.last_ok_s_ago), p.failures]);
+      document.getElementById("listeners").innerHTML = s.phone_listeners.length
+        ? `listening at ${s.phone_listeners.map((a) => `<code>${a}</code>`).join(", ")}`
+        : "no phone listener";
+      const watched = (w) => (w.length ? w.map((c) => (c === "venue" ? "venue" : hex(c))).join(" ") : "–");
+      rows("phones", s.phones, (ph) => [ph.phone, `<code>${ph.peer}</code>`, `${ph.connected_s} s`,
+        ph.hello ? '<span class="up">checked</span>' : "–", watched(ph.watching), ph.pushed, ph.events_sent, ph.resyncs]);
       rows("roster", s.roster, (e) => [e.beacon, `<code>${e.url}</code>`, `<code>${e.key}…</code>`]);
       document.getElementById("revoked").textContent = s.revoked.length ? `revoked: ${s.revoked.join(", ")}` : "";
       rows("groups", Object.entries(s.groups), ([id, g]) => [hex(id), g.members_writing, g.held]);

@@ -1,4 +1,5 @@
-"""One beacon node: trust, store, ingest, sync engine, peers, gossip, roster, discovery and the two HTTP APIs."""
+"""One beacon node: trust, store, ingest, sync engine, peers, gossip, roster, discovery, the two HTTP APIs and the
+phone listeners."""
 
 from __future__ import annotations
 
@@ -14,6 +15,9 @@ from beacon.config import Config
 from beacon.ingest import Ingest
 from beacon.net.client import HttpPeerLink
 from beacon.net.server import build_dev_app, build_peer_app
+from beacon.phone.hub import PhoneHub
+from beacon.phone.pipe import PhoneListener
+from beacon.phone.ws import WsListener
 from beacon.records.payloads import encode_payload
 from beacon.records.venue import VENUE_CHANNEL, VenueBody, VenueType, sign_venue_record
 from beacon.store import Store
@@ -61,6 +65,11 @@ class Node:
         self.trust.learn(self.store.list_channel(VENUE_CHANNEL))  # what we knew before a restart
         self.ingest.subscribe(self.trust.listener)  # before gossip, so a revocation applies before anything is pushed
         self.ingest.subscribe(self.gossiper.on_new)
+        self.phones = PhoneHub(self.store, self.ingest, self.key, me, self.engine.digest)
+        self.ingest.subscribe(self.phones.on_new)
+        self.phone_listeners: list[PhoneListener] = []
+        if config.phone_port is not None:
+            self.phone_listeners.append(WsListener(self.phones, config.phone_host, config.phone_port))
 
     @property
     def advertise_url(self) -> str:
@@ -92,6 +101,8 @@ class Node:
         peer_ssl = tls_context(True, self.config.cert_file, self.config.key_file, self.config.ca_file)
         self.port = await self._serve(build_peer_app(self), self.config.host, self.config.port, peer_ssl)
         self.dev_port = await self._serve(build_dev_app(self), "127.0.0.1", self.config.dev_port, None)
+        for listener in self.phone_listeners:
+            await listener.start()
         me = self.trust.me
         log.info(
             "%s up: peers over mTLS at %s, status page http://127.0.0.1:%d/ | key %s, venue %d (venue key %s), "
@@ -106,6 +117,8 @@ class Node:
             self.store.count(),
             len(self.peers.all()),
         )
+        for listener in self.phone_listeners:
+            log.info("phones connect at %s", listener.address)
         self.announce()
         if self.config.mdns:
             self._discovery = Discovery(me.name, me.venue_id, self.config.host, self.port, self._found)
@@ -157,6 +170,9 @@ class Node:
         for task in self._tasks:
             task.cancel()
         await self.gossiper.settle()
+        await self.phones.close()
+        for listener in self.phone_listeners:
+            await listener.stop()
         if self._discovery:
             await self._discovery.stop()
         for runner in self._runners:
@@ -189,6 +205,8 @@ class Node:
                 for e in sorted(self.trust.roster.values(), key=lambda e: e.beacon_id)
             ],
             "revoked": [f"beacon-{beacon_id}" for beacon_id in sorted(self.trust.revoked.values())],
+            "phone_listeners": [listener.address for listener in self.phone_listeners],
+            "phones": self.phones.status(),
             "peers": [
                 {
                     "url": p.url,

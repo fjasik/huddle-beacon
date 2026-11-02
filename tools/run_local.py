@@ -7,7 +7,7 @@
 
 Layout under data/local/: venue/ (the operator's venue key and CA), operator/ (operator certificate), nodeN/ (each
 beacon's key, certificates and database), nodeN.toml. Node N: peers over mutual TLS on 844N, status page and dev
-CLI on http://127.0.0.1:854N/.
+API on http://127.0.0.1:854N/, phones (dev CLI, emulators at 10.0.2.2) on ws://127.0.0.1:864N/.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ def setup(count: int, venue_id: int, interval: float, mdns: bool) -> list[Path]:
         path = LOCAL / f"node{i}.toml"
         path.write_text(
             f"beacon_id = {i}\nvenue_id = {venue.venue_id}\nport = {8440 + i}\ndev_port = {8540 + i}\n"
+            f'phone_port = {8640 + i}\nphone_host = "127.0.0.1"\n'
             f'host = "127.0.0.1"\ndata_dir = "node{i}"\npeers = [{seeds}]\n'
             f'key_file = "node{i}/beacon.key"\ncert_file = "node{i}/beacon.crt"\n'
             f'compact_cert_file = "node{i}/beacon.cert"\nca_file = "venue/venue-ca.crt"\n'
