@@ -14,6 +14,7 @@ from typing import Any
 
 import cbor2
 
+from beacon.phone.protocol import sign_hello
 from beacon.records.cipher import aad_of, seal
 from beacon.records.codec import Body, RecordType, encode_wire, sign_record, signed_message
 from beacon.records.invite import PREFIX, Invite, b58encode, encode_invite
@@ -151,7 +152,49 @@ def build_vectors() -> dict[str, Any]:
         "certs": cert_cases(),
         "venue_records": venue_cases(),
         "invites": invite_cases(),
+        "hello": hello_cases(),
     }
+
+
+def hello_cases() -> list[dict[str, Any]]:
+    """Hello replies as CBOR (hex), the nonce the phone sent and the venue it expects; valid or the reason."""
+    nonce, other_nonce = bytes(range(16)), bytes([0xEE] * 16)
+    beacon_1 = cert(Role.BEACON, 1, BEACON_1)
+
+    def reply(cert_wire: bytes, sig: bytes, beacon_id: int = 1, venue_id: int = 3, v: int = 1) -> str:
+        fields = {"v": v, "beacon_id": beacon_id, "venue_id": venue_id, "digest": bytes(32), "cert": cert_wire}
+        return cbor2.dumps({**fields, "sig": sig}, canonical=True).hex()
+
+    good_sig = sign_hello(BEACON_1, nonce, 3)
+    cases: list[tuple[str, str, list[bytes], str | None]] = [
+        ("beacon-1 signs the nonce", reply(beacon_1, good_sig), [], None),
+        ("signature over another nonce", reply(beacon_1, sign_hello(BEACON_1, other_nonce, 3)), [], "bad_sig"),
+        ("signed by another beacon's key", reply(beacon_1, sign_hello(BEACON_2, nonce, 3)), [], "bad_sig"),
+        ("certificate from another venue key", reply(cert(Role.BEACON, 1, BEACON_1, by=BEN), good_sig), [], "bad_cert"),
+        (
+            "expired certificate",
+            reply(cert(Role.BEACON, 1, BEACON_1, NOW - 200, NOW - 100), good_sig),
+            [],
+            "bad_cert",
+        ),
+        ("operator certificate", reply(cert(Role.OPERATOR, 1, BEACON_1), good_sig), [], "not_a_beacon"),
+        ("reply claims another beacon ID", reply(beacon_1, good_sig, beacon_id=2), [], "bad_cert"),
+        ("reply claims another venue", reply(beacon_1, good_sig, venue_id=4), [], "wrong_venue"),
+        ("revoked beacon", reply(beacon_1, good_sig), [BEACON_1.pub], "revoked"),
+        ("unknown protocol version", reply(beacon_1, good_sig, v=2), [], "bad_version"),
+    ]
+    return [
+        {
+            "name": n,
+            "nonce": nonce.hex(),
+            "venue_id": 3,
+            "reply": r,
+            "revoked": [p.hex() for p in revoked],
+            "valid": reason is None,
+            **({"reason": reason} if reason else {}),
+        }
+        for n, r, revoked, reason in cases
+    ]
 
 
 def invite_cases() -> list[dict[str, Any]]:

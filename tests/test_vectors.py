@@ -7,8 +7,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import cbor2
 import pytest
 
+from beacon.phone.protocol import HelloError, check_hello
 from beacon.records import GroupKeys, KeyPair, Rejected, validate_record
 from beacon.records.any import validate_any
 from beacon.records.cipher import DecryptError, aad_of, open_payload
@@ -132,3 +134,25 @@ def test_invite(case: dict[str, Any]) -> None:
     else:
         with pytest.raises(InviteError):
             decode_invite(case["invite"])
+
+
+@pytest.mark.parametrize("case", VECTORS["hello"], ids=lambda c: c["name"])
+def test_hello(case: dict[str, Any]) -> None:
+    revoked = {bytes.fromhex(p) for p in case["revoked"]}
+
+    def check() -> object:
+        return check_hello(
+            cbor2.loads(bytes.fromhex(case["reply"])),
+            bytes.fromhex(case["nonce"]),
+            bytes.fromhex(VECTORS["venue"]["pub"]),
+            case["venue_id"],
+            VECTORS["now"],
+            revoked.__contains__,
+        )
+
+    if case["valid"]:
+        check()
+    else:
+        with pytest.raises(HelloError) as refused:
+            check()
+        assert refused.value.reason.value == case["reason"]
