@@ -4,10 +4,12 @@
                                             # to start each node in its own terminal (live logs per node)
     python tools/run_local.py 3             # set up if needed, then run all 3 in this terminal; Ctrl+C stops them
     python tools/run_local.py 3 --fresh     # throw away the venue, keys and databases first
+    python tools/run_local.py 3 --lan       # phones on the Wi-Fi can connect too (open TCP 8641-864N in the firewall)
 
 Layout under data/local/: venue/ (the operator's venue key and CA), operator/ (operator certificate), nodeN/ (each
 beacon's key, certificates and database), nodeN.toml. Node N: peers over mutual TLS on 844N, status page and dev
-API on http://127.0.0.1:854N/, phones (dev CLI, emulators at 10.0.2.2) on ws://127.0.0.1:864N/.
+API on http://127.0.0.1:854N/, phones (dev CLI, emulators at 10.0.2.2) on ws://127.0.0.1:864N/ (with --lan: on every
+interface, so phones on the Wi-Fi can connect).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -27,7 +30,15 @@ ROOT = Path(__file__).resolve().parent.parent
 LOCAL = ROOT / "data" / "local"
 
 
-def setup(count: int, venue_id: int, interval: float, mdns: bool) -> list[Path]:
+def lan_address() -> str | None:
+    """The address other devices on the network reach this PC at (no packet is sent)."""
+    with contextlib.suppress(OSError), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect(("192.0.2.1", 9))
+        return str(s.getsockname()[0])
+    return None
+
+
+def setup(count: int, venue_id: int, interval: float, mdns: bool, lan: bool = False) -> list[Path]:
     venue_dir = LOCAL / "venue"
     venue = load_venue(venue_dir) if (venue_dir / "venue.key").exists() else init_venue(venue_dir, venue_id)
     if not (LOCAL / "operator" / "operator.key").exists():
@@ -41,7 +52,7 @@ def setup(count: int, venue_id: int, interval: float, mdns: bool) -> list[Path]:
         path = LOCAL / f"node{i}.toml"
         path.write_text(
             f"beacon_id = {i}\nvenue_id = {venue.venue_id}\nport = {8440 + i}\ndev_port = {8540 + i}\n"
-            f'phone_port = {8640 + i}\nphone_host = "127.0.0.1"\n'
+            f'phone_port = {8640 + i}\nphone_host = "{"0.0.0.0" if lan else "127.0.0.1"}"\n'
             f'host = "127.0.0.1"\ndata_dir = "node{i}"\npeers = [{seeds}]\n'
             f'key_file = "node{i}/beacon.key"\ncert_file = "node{i}/beacon.crt"\n'
             f'compact_cert_file = "node{i}/beacon.cert"\nca_file = "venue/venue-ca.crt"\n'
@@ -61,11 +72,16 @@ def main() -> None:
     parser.add_argument("--interval", type=float, default=1.5, help="gossip interval in seconds")
     parser.add_argument("--venue", type=int, default=3)
     parser.add_argument("--mdns", action="store_true", help="also find each other by mDNS")
+    parser.add_argument("--lan", action="store_true", help="accept phones from the network, not just this PC")
     args = parser.parse_args()
 
     if args.fresh:
         shutil.rmtree(LOCAL, ignore_errors=True)
-    configs = setup(args.count, args.venue, args.interval, args.mdns)
+    configs = setup(args.count, args.venue, args.interval, args.mdns, args.lan)
+    if args.lan:
+        host = lan_address() or "<this PC's address>"
+        urls = ", ".join(f"ws://{host}:{8640 + i}/" for i in range(1, args.count + 1))
+        print(f"phones on the network: {urls}")
     if args.setup:
         print(f"venue, operator and {args.count} beacons ready in {LOCAL}. Start each node in its own terminal:")
         for config in configs:
