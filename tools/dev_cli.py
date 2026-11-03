@@ -39,6 +39,7 @@ from typing import Any, NoReturn, TypeVar
 
 import cbor2
 
+from beacon.config import DEV_PORT_BASE, PHONE_PORT_BASE
 from beacon.connect import BeaconRefused, ConnectorError
 from beacon.connect.ws import WsConnector
 from beacon.records import Body, GroupKeys, KeyPair, RecordType, Rejected, sign_record, validate_record
@@ -165,7 +166,7 @@ class Link:
         node: str = self.node
         if not node.isdigit():
             return node.rstrip("/") + ("/" if ws else "")
-        port = int(node) if int(node) >= 100 else (8640 if ws else 8540) + int(node)
+        port = int(node) if int(node) >= 100 else (PHONE_PORT_BASE if ws else DEV_PORT_BASE) + int(node)
         return f"ws://127.0.0.1:{port}/" if ws else f"http://127.0.0.1:{port}"
 
     async def __aenter__(self) -> Link:
@@ -588,7 +589,7 @@ def cmd_watch(state: dict[str, Any], args: argparse.Namespace) -> None:
 
 def cmd_status(_: dict[str, Any], args: argparse.Namespace) -> None:
     node = args.node
-    url = f"http://127.0.0.1:{8540 + int(node) if int(node) < 100 else int(node)}" if node.isdigit() else node
+    url = f"http://127.0.0.1:{DEV_PORT_BASE + int(node) if int(node) < 100 else int(node)}" if node.isdigit() else node
     print(json.dumps(dev_call(url.rstrip("/"), "/status"), indent=2))
 
 

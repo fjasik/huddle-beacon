@@ -17,6 +17,7 @@ import statistics
 import time
 from pathlib import Path
 
+from beacon.config import PHONE_PORT_BASE
 from beacon.connect.ws import WsConnector
 from beacon.records import Body, GroupKeys, KeyPair, RecordType, sign_record
 from beacon.records.payloads import encode_payload
@@ -27,7 +28,7 @@ TIMEOUT_S = 10.0
 
 def url(node: str) -> str:
     if node.isdigit():
-        return f"ws://127.0.0.1:{8640 + int(node) if int(node) < 100 else int(node)}/"
+        return f"ws://127.0.0.1:{PHONE_PORT_BASE + int(node) if int(node) < 100 else int(node)}/"
     return node
 
 

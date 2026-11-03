@@ -4,12 +4,14 @@
                                             # to start each node in its own terminal (live logs per node)
     python tools/run_local.py 3             # set up if needed, then run all 3 in this terminal; Ctrl+C stops them
     python tools/run_local.py 3 --fresh     # throw away the venue, keys and databases first
-    python tools/run_local.py 3 --lan       # phones on the Wi-Fi can connect too (open TCP 8641-864N in the firewall)
+    python tools/run_local.py 3 --lan       # phones and Pi beacons on the Wi-Fi can connect too (open TCP 8441-844N
+                                            # and 8641-864N in the firewall)
 
 Layout under data/local/: venue/ (the operator's venue key and CA), operator/ (operator certificate), nodeN/ (each
 beacon's key, certificates and database), nodeN.toml. Node N: peers over mutual TLS on 844N, status page and dev
-API on http://127.0.0.1:854N/, phones (dev CLI, emulators at 10.0.2.2) on ws://127.0.0.1:864N/ (with --lan: on every
-interface, so phones on the Wi-Fi can connect).
+API on http://127.0.0.1:854N/, phones (dev CLI, emulators at 10.0.2.2) on ws://127.0.0.1:864N/. With --lan the peer
+and phone ports listen on every interface and the roster gives this PC's network address, so phones and beacons on
+Pis (tools/provision.py) can join.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import sys
 import time
 from pathlib import Path
 
+from beacon.config import PEER_PORT_BASE, PHONE_PORT_BASE, ports, render
 from beacon.trust.certs import Role
 from beacon.trust.provision import init_venue, load_venue, provision
 
@@ -43,23 +46,34 @@ def setup(count: int, venue_id: int, interval: float, mdns: bool, lan: bool = Fa
     venue = load_venue(venue_dir) if (venue_dir / "venue.key").exists() else init_venue(venue_dir, venue_id)
     if not (LOCAL / "operator" / "operator.key").exists():
         provision(venue, Role.OPERATOR, 1, LOCAL / "operator", ["127.0.0.1"])
+    address = lan_address() if lan else None
     configs = []
     for i in range(1, count + 1):
         node_dir = LOCAL / f"node{i}"
         if not (node_dir / "beacon.key").exists():
             provision(venue, Role.BEACON, i, node_dir, ["127.0.0.1", "localhost"])
-        seeds = ", ".join(f'"https://127.0.0.1:{8440 + j}"' for j in range(1, count + 1) if j != i)
+        values: dict[str, object] = {
+            "beacon_id": i,
+            "venue_id": venue.venue_id,
+            **ports(i),
+            "phone_host": "0.0.0.0" if lan else "127.0.0.1",
+            "host": "0.0.0.0" if address else "127.0.0.1",
+        }
+        if address:
+            values["advertise_url"] = f"https://{address}:{PEER_PORT_BASE + i}"
+        values |= {
+            "data_dir": f"node{i}",
+            "peers": [f"https://127.0.0.1:{PEER_PORT_BASE + j}" for j in range(1, count + 1) if j != i],
+            "key_file": f"node{i}/beacon.key",
+            "cert_file": f"node{i}/beacon.crt",
+            "compact_cert_file": f"node{i}/beacon.cert",
+            "ca_file": "venue/venue-ca.crt",
+            "venue_pub_file": "venue/venue.pub",
+            "mdns": mdns,
+            "gossip_interval_s": interval,
+        }
         path = LOCAL / f"node{i}.toml"
-        path.write_text(
-            f"beacon_id = {i}\nvenue_id = {venue.venue_id}\nport = {8440 + i}\ndev_port = {8540 + i}\n"
-            f'phone_port = {8640 + i}\nphone_host = "{"0.0.0.0" if lan else "127.0.0.1"}"\n'
-            f'host = "127.0.0.1"\ndata_dir = "node{i}"\npeers = [{seeds}]\n'
-            f'key_file = "node{i}/beacon.key"\ncert_file = "node{i}/beacon.crt"\n'
-            f'compact_cert_file = "node{i}/beacon.cert"\nca_file = "venue/venue-ca.crt"\n'
-            f'venue_pub_file = "venue/venue.pub"\nmdns = {"true" if mdns else "false"}\n'
-            f"gossip_interval_s = {interval}\n",
-            encoding="utf-8",
-        )
+        path.write_text(render(values), encoding="utf-8")
         configs.append(path)
     return configs
 
@@ -80,7 +94,7 @@ def main() -> None:
     configs = setup(args.count, args.venue, args.interval, args.mdns, args.lan)
     if args.lan:
         host = lan_address() or "<this PC's address>"
-        urls = ", ".join(f"ws://{host}:{8640 + i}/" for i in range(1, args.count + 1))
+        urls = ", ".join(f"ws://{host}:{PHONE_PORT_BASE + i}/" for i in range(1, args.count + 1))
         print(f"phones on the network: {urls}")
     if args.setup:
         print(f"venue, operator and {args.count} beacons ready in {LOCAL}. Start each node in its own terminal:")

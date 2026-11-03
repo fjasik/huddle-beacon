@@ -23,10 +23,15 @@ roster_interval_s = 600
 
 from __future__ import annotations
 
+import json
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+PEER_PORT_BASE = 8440
+DEV_PORT_BASE = 8540
+PHONE_PORT_BASE = 8640
 PATH_FIELDS = ("data_dir", "key_file", "cert_file", "compact_cert_file", "ca_file", "venue_pub_file")
 
 
@@ -63,3 +68,30 @@ class Config:
             value = Path(raw[key])
             raw[key] = value if value.is_absolute() else path.parent / value
         return cls(**raw)
+
+
+def ports(beacon_id: int) -> dict[str, int]:
+    """The usual ports of beacon N: 844N peers, 854N status page, 864N phones. Unique per beacon, so several can share
+    one machine."""
+    return {
+        "port": PEER_PORT_BASE + beacon_id,
+        "dev_port": DEV_PORT_BASE + beacon_id,
+        "phone_port": PHONE_PORT_BASE + beacon_id,
+    }
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, str | Path):
+        return json.dumps(str(value))
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    raise TypeError(f"no TOML form for {value!r}")
+
+
+def render(values: Mapping[str, object]) -> str:
+    """A config file with these settings, in the order given (the reverse of `Config.load`)."""
+    return "".join(f"{key} = {_toml_value(value)}\n" for key, value in values.items())

@@ -76,6 +76,8 @@ The operator (`tools/venue_ca.py`, keys in `data/local/venue/`):
 .venv\Scripts\python tools\venue_ca.py revoke 3 --node 1                           # beacon-3 is cut off
 ```
 
+On Raspberry Pis: `docs/PI_SETUP.md` (`tools/provision.py` installs, certifies and starts a beacon over SSH; `deploy/` holds the install script and systemd unit).
+
 Other tools: `tools/latency.py --from 1 --to 3` (phone-to-phone delivery time across two beacons). `tools/run_local.py 3` runs all three in one terminal. `--mdns` makes the nodes also find each other by mDNS. Kill a node and restart it to watch it catch up.
 
 ## Node API

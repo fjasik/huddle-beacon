@@ -22,6 +22,7 @@ from pathlib import Path
 
 import cbor2
 
+from beacon.config import PEER_PORT_BASE
 from beacon.trust.certs import Role, tls_context, verify_compact
 from beacon.trust.provision import init_venue, issue, load_venue, provision, revoke_record
 
@@ -31,7 +32,7 @@ OPERATOR_DIR = ROOT / "data" / "local" / "operator"
 
 
 def peer_url(node: str) -> str:
-    return f"https://127.0.0.1:{8440 + int(node)}" if node.isdigit() and int(node) < 100 else node.rstrip("/")
+    return f"https://127.0.0.1:{PEER_PORT_BASE + int(node)}" if node.isdigit() and int(node) < 100 else node.rstrip("/")
 
 
 def main() -> None:

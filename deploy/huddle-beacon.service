@@ -1,0 +1,19 @@
+[Unit]
+Description=Huddle beacon
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+User=huddle-beacon
+Group=huddle-beacon
+ExecStart=/opt/huddle-beacon/venv/bin/python -m beacon run --config /etc/huddle-beacon/beacon.toml
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/huddle-beacon
+
+[Install]
+WantedBy=multi-user.target
