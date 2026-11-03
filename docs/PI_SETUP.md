@@ -46,6 +46,15 @@ Then the same without `--dry-run`. `--peer` gives the beacons it starts from; gi
 More are learned from the roster. Every step is printed before it runs. At the end it prints the service state,
 `/status` and the address for phones (`ws://192.168.0.69:8643/`).
 
+**Without the service** (first tests): add `--skip-service-setup`. Nothing is installed in systemd and nothing
+starts on its own; the script prints the command to run the beacon in a terminal on the Pi, with its log on screen:
+
+```bash
+sudo -u huddle-beacon /opt/huddle-beacon/venv/bin/python -m beacon run --config /etc/huddle-beacon/beacon.toml
+```
+
+To switch to the service later, provision again with `--install` and without the flag. With the flag, a service installed before is disabled.
+
 Later:
 - **New code:** `provision.py 3 qorvo-pi-3 --install`. The key stays; the certificates are renewed.
 - **New certificates or config only** (expiry, peers, a different venue): `provision.py 3 qorvo-pi-3`.

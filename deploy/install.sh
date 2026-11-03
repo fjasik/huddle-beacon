@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Installs or upgrades huddle-beacon on a Raspberry Pi (Bookworm, Python 3.11+). Run as root, from the folder that
-# tools/provision.py copied over:  sudo bash install.sh huddle-beacon.tar.gz
+# tools/provision.py copied over:  sudo bash install.sh huddle-beacon.tar.gz [--no-service]
 #
 #   /opt/huddle-beacon/venv     the code, in its own Python environment
 #   /etc/huddle-beacon/         config, certificates and the beacon's key (provision.py fills it)
 #   /var/lib/huddle-beacon/     the database
 #
-# The service is enabled here but only started by provision.py, once the config is in place.
+# The service is enabled here but only started by provision.py, once the config is in place. --no-service leaves
+# systemd alone (and disables a service installed before), for running the beacon by hand.
 set -euo pipefail
 
-PACKAGE=$(realpath "${1:?usage: install.sh <huddle-beacon.tar.gz>}")
+PACKAGE=$(realpath "${1:?usage: install.sh <huddle-beacon.tar.gz> [--no-service]}")
+WITH_SERVICE=$([ "${2:-}" = "--no-service" ] && echo no || echo yes)
 HERE=$(dirname "$(realpath "$0")")
 APP=/opt/huddle-beacon
 CONF=/etc/huddle-beacon
@@ -27,7 +29,11 @@ install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATA"
 # Same version number as before, so force the new code in.
 "$APP/venv/bin/pip" install --quiet --force-reinstall --no-deps "$PACKAGE"
 
-install -m 644 "$HERE/huddle-beacon.service" /etc/systemd/system/huddle-beacon.service
-systemctl daemon-reload
-systemctl enable huddle-beacon.service
+if [ "$WITH_SERVICE" = yes ]; then
+    install -m 644 "$HERE/huddle-beacon.service" /etc/systemd/system/huddle-beacon.service
+    systemctl daemon-reload
+    systemctl enable huddle-beacon.service
+elif [ -f /etc/systemd/system/huddle-beacon.service ]; then
+    systemctl disable --now huddle-beacon.service
+fi
 echo "installed: $("$APP/venv/bin/python" -m beacon --version)"

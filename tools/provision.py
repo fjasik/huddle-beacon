@@ -3,12 +3,14 @@
     python tools/provision.py 3 qorvo-pi-3 --install --peer https://192.168.0.100:8441
     python tools/provision.py 3 qorvo-pi-3 --dry-run        # print every command; nothing runs on the Pi
     python tools/provision.py 3 qorvo-pi-3                  # new certificates and config only (code already there)
+    python tools/provision.py 3 qorvo-pi-3 --install --skip-service-setup   # no systemd service; run it by hand
 
 1. --install: copy the committed code (git archive HEAD) and deploy/ to the Pi and run deploy/install.sh.
 2. Make the beacon's key on the Pi. Only its public half comes back; the key never leaves the Pi.
 3. Issue its certificates with the venue key (--venue-dir) for the Pi's address.
 4. Write its config: ports 844N/854N/864N for beacon N, peers and phones from the network.
-5. Copy certificates, config and the venue's public files to /etc/huddle-beacon, restart the service, show /status.
+5. Copy certificates, config and the venue's public files to /etc/huddle-beacon, restart the service, show /status
+   (with --skip-service-setup: print the command that runs the beacon in a terminal instead).
 
 What goes to the Pi is also kept in data/provision/beacon-N/. Needs key login over SSH and sudo without a password
 (the Pi OS default for the first user).
@@ -38,6 +40,7 @@ DATA = PurePosixPath("/var/lib/huddle-beacon")
 PYTHON = APP / "venv" / "bin" / "python"
 UPLOAD = PurePosixPath("/tmp/huddle-provision")
 PACKAGE = "huddle-beacon.tar.gz"
+MANUAL_RUN = f"sudo -u {SERVICE} {PYTHON} -m beacon run --config {CONF / 'beacon.toml'}"
 PI_FILES = ("beacon.toml", "beacon.crt", "beacon.cert", "venue-ca.crt", "venue.pub")
 
 
@@ -101,12 +104,12 @@ def build_package(out: Path) -> None:
     )
 
 
-def install(pi: Pi, staging: Path) -> None:
+def install(pi: Pi, staging: Path, service: bool) -> None:
     package = staging / PACKAGE
     build_package(package)
     pi.run(f"rm -rf {UPLOAD} && mkdir -p {UPLOAD}")
     pi.copy([package, DEPLOY / "install.sh", DEPLOY / f"{SERVICE}.service"], UPLOAD)
-    pi.run(f"sudo -n bash {UPLOAD}/install.sh {UPLOAD}/{PACKAGE}")
+    pi.run(f"sudo -n bash {UPLOAD}/install.sh {UPLOAD}/{PACKAGE}" + ("" if service else " --no-service"))
 
 
 def make_key(pi: Pi) -> str:
@@ -126,6 +129,9 @@ def main() -> None:
     parser.add_argument("--venue-dir", type=Path, default=ROOT / "data" / "local" / "venue")
     parser.add_argument("--days", type=int, default=30, help="certificates expire after this many days")
     parser.add_argument("--install", action="store_true", help="install or upgrade the code first")
+    parser.add_argument(
+        "--skip-service-setup", action="store_true", help="no systemd service: prints the command to run it by hand"
+    )
     parser.add_argument("--dry-run", action="store_true", help="print the commands, run nothing on the Pi")
     args = parser.parse_args()
 
@@ -137,7 +143,7 @@ def main() -> None:
     print(f"beacon-{args.id} of venue {venue.venue_id} on {args.host} ({address})")
 
     if args.install:
-        install(pi, staging)
+        install(pi, staging, service=not args.skip_service_setup)
 
     pub = make_key(pi)
     if pub:
@@ -154,12 +160,14 @@ def main() -> None:
     pi.run(f"rm -rf {UPLOAD} && mkdir -p {UPLOAD}")
     pi.copy([staging / name for name in PI_FILES], UPLOAD)
     files = " ".join(str(UPLOAD / name) for name in PI_FILES)
-    pi.run(
-        f"sudo -n install -o root -g {SERVICE} -m 640 {files} {CONF}/ && rm -rf {UPLOAD}"
-        f" && sudo -n systemctl restart {SERVICE}"
-    )
+    pi.run(f"sudo -n install -o root -g {SERVICE} -m 640 {files} {CONF}/ && rm -rf {UPLOAD}")
     status_url = f"http://127.0.0.1:{config['dev_port']}/status"
-    pi.run(f"sleep 3; systemctl is-active {SERVICE} && curl -fsS {shlex.quote(status_url)}")
+    if args.skip_service_setup:
+        print(f"no service; run it in a terminal on the Pi (Ctrl+C stops it):\n  {MANUAL_RUN}")
+        print(f"then, on the Pi: curl -s {status_url}")
+    else:
+        pi.run(f"sudo -n systemctl restart {SERVICE}")
+        pi.run(f"sleep 3; systemctl is-active {SERVICE} && curl -fsS {shlex.quote(status_url)}")
     print(f"phones: ws://{address}:{config['phone_port']}/  peers: {config['advertise_url']}")
 
 
