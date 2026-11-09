@@ -1,15 +1,16 @@
 """The operator's tool: the venue key and certificates. Runs on the operator's machine, never on a beacon.
 
-    python tools/venue_ca.py init --venue 3                          # new venue key + CA in data/local/venue
+    python tools/venue_ca.py init --venue 3                          # new venue key, CA and operator certificate
+    python tools/venue_ca.py --dir data/venues/5 init --venue 5      # another venue, in its own directory
     python tools/venue_ca.py issue beacon 4 --pub <hex> --out DIR    # certificates for a key made on a beacon
     python tools/venue_ca.py provision beacon 4 --out DIR            # key + certificates in one go (local testing)
-    python tools/venue_ca.py provision operator 1 --out data/local/operator
+    python tools/venue_ca.py provision operator 1 --out data/local/venue/operator --days 365   # renew the operator's
     python tools/venue_ca.py revoke 3 --node 1                       # revoke beacon-3, load it onto node 1
     python tools/venue_ca.py show data/local/node1/beacon.cert       # read a compact certificate
     python tools/venue_ca.py list                                    # every certificate issued
 
 --node N means https://127.0.0.1:844N (the local peer port); a URL also works. Revocations go over mutual TLS with
-the operator certificate in data/local/operator.
+the operator certificate kept in the venue directory (operator/).
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from beacon.trust.provision import init_venue, issue, load_venue, provision, rev
 
 ROOT = Path(__file__).resolve().parent.parent
 VENUE_DIR = ROOT / "data" / "local" / "venue"
-OPERATOR_DIR = ROOT / "data" / "local" / "operator"
+OPERATOR_DAYS = 365
 
 
 def peer_url(node: str) -> str:
@@ -60,7 +61,10 @@ def main() -> None:
 
     if args.command == "init":
         venue = init_venue(args.dir, args.venue)
+        provision(venue, Role.OPERATOR, 1, venue.operator_dir, ["127.0.0.1"], OPERATOR_DAYS)
         print(f"venue {venue.venue_id}: key {venue.key.pub.hex()}\nCA: {venue.ca_file}\npublic key: {venue.pub_file}")
+        print(f"operator certificate: {venue.operator_dir} (valid {OPERATOR_DAYS} days)")
+        print(f"back up {args.dir / 'venue.key'}: without it no beacon can be certified or revoked")
         return
     venue = load_venue(args.dir)
     if args.command in ("issue", "provision"):
@@ -74,7 +78,8 @@ def main() -> None:
         print(f"issued {role.value}-{args.id}: {args.out / (role.value + '.crt')}, {args.out / (role.value + '.cert')}")
     elif args.command == "revoke":
         wire = revoke_record(venue, args.beacon)
-        context = tls_context(False, OPERATOR_DIR / "operator.crt", OPERATOR_DIR / "operator.key", venue.ca_file)
+        operator = venue.operator_dir
+        context = tls_context(False, operator / "operator.crt", operator / "operator.key", venue.ca_file)
         url = peer_url(args.node) + "/sync/records"
         request = urllib.request.Request(
             url, data=cbor2.dumps({"records": [wire]}), headers={"Content-Type": "application/cbor"}

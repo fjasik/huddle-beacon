@@ -1,7 +1,7 @@
 """Entry point.
 
-    python -m beacon run --config node1.toml
-    python -m beacon keygen --out /etc/huddle-beacon/beacon.key   # once per beacon; prints the public key (hex)
+python -m beacon run --config node1.toml
+python -m beacon keygen --out /etc/huddle-beacon/beacon.key   # once per beacon; prints the public key (hex)
 """
 
 from __future__ import annotations

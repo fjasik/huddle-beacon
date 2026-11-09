@@ -7,7 +7,7 @@
     python tools/run_local.py 3 --lan       # phones and Pi beacons on the Wi-Fi can connect too (open TCP 8441-844N
                                             # and 8641-864N in the firewall)
 
-Layout under data/local/: venue/ (the operator's venue key and CA), operator/ (operator certificate), nodeN/ (each
+Layout under data/local/: venue/ (the operator's venue key and CA; venue/operator/ its certificate), nodeN/ (each
 beacon's key, certificates and database), nodeN.toml. Node N: peers over mutual TLS on 844N, status page and dev
 API on http://127.0.0.1:854N/, phones (dev CLI, emulators at 10.0.2.2) on ws://127.0.0.1:864N/. With --lan the peer
 and phone ports listen on every interface and the roster gives this PC's network address, so phones and beacons on
@@ -44,8 +44,8 @@ def lan_address() -> str | None:
 def setup(count: int, venue_id: int, interval: float, mdns: bool, lan: bool = False) -> list[Path]:
     venue_dir = LOCAL / "venue"
     venue = load_venue(venue_dir) if (venue_dir / "venue.key").exists() else init_venue(venue_dir, venue_id)
-    if not (LOCAL / "operator" / "operator.key").exists():
-        provision(venue, Role.OPERATOR, 1, LOCAL / "operator", ["127.0.0.1"])
+    if not (venue.operator_dir / "operator.key").exists():
+        provision(venue, Role.OPERATOR, 1, venue.operator_dir, ["127.0.0.1"])
     address = lan_address() if lan else None
     configs = []
     for i in range(1, count + 1):

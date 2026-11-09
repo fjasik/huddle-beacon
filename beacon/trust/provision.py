@@ -8,6 +8,7 @@ beacon. Beacons get only the public files (venue-ca.crt, venue.pub) plus their o
     venue/venue.pub     public: the venue key, hex (for compact certificates and venue records)
     venue/issued.json   name → public key of every certificate issued
     venue/state.json    venue id, the seq counter for venue-signed records
+    venue/operator/     the operator's key and certificate, for sending revocations to beacons
 """
 
 from __future__ import annotations
@@ -38,6 +39,10 @@ class Venue:
     @property
     def pub_file(self) -> Path:
         return self.dir / "venue.pub"
+
+    @property
+    def operator_dir(self) -> Path:
+        return self.dir / "operator"
 
     def _json(self, name: str) -> dict[str, object]:
         path = self.dir / name
