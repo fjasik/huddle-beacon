@@ -4,8 +4,8 @@
 
 Two connectors play the phones: one watches a throwaway group on the second beacon, the other posts `count`
 messages to the first. Each delay runs from just before the push to the moment the watch event arrives, so it covers
-phone → beacon A → gossip → beacon B → phone. Prints each delay, then the median and worst. Uses the venue key in
-data/local/venue/ (made by tools/run_local.py --setup).
+phone -> beacon A -> gossip -> beacon B -> phone. Prints each delay, then the median and worst. Uses the venue key in
+data/local/venue/ (made by tools/run_local.py --setup), or --venue-dir for another venue.
 """
 
 from __future__ import annotations
@@ -32,9 +32,9 @@ def url(node: str) -> str:
     return node
 
 
-async def measure(source: str, target: str, count: int) -> list[float]:
-    venue_pub = bytes.fromhex((VENUE_DIR / "venue.pub").read_text().strip())
-    venue_id = int(json.loads((VENUE_DIR / "state.json").read_text(encoding="utf-8"))["venue_id"])
+async def measure(source: str, target: str, count: int, venue_dir: Path) -> list[float]:
+    venue_pub = bytes.fromhex((venue_dir / "venue.pub").read_text().strip())
+    venue_id = int(json.loads((venue_dir / "state.json").read_text(encoding="utf-8"))["venue_id"])
     user, group = KeyPair.generate(), GroupKeys.generate()
     arrived: asyncio.Queue[float] = asyncio.Queue()
     delays: list[float] = []
@@ -66,8 +66,9 @@ def main() -> None:
     parser.add_argument("--from", dest="source", default="1")
     parser.add_argument("--to", dest="target", default="3")
     parser.add_argument("--count", type=int, default=20)
+    parser.add_argument("--venue-dir", type=Path, default=VENUE_DIR)
     args = parser.parse_args()
-    delays = asyncio.run(measure(args.source, args.target, args.count))
+    delays = asyncio.run(measure(args.source, args.target, args.count, args.venue_dir))
     print(
         f"phone -> node {args.source} -> node {args.target} -> phone: "
         f"median {statistics.median(delays):.1f} ms, worst {max(delays):.1f} ms"
