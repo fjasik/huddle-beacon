@@ -18,7 +18,11 @@ It talks to beacons the way a phone does: the phone protocol over WebSocket (ws:
 beacon's certificate and nonce signature at hello and learning the venue's revocations. `--via dev` uses the dev API
 (http://127.0.0.1:854N/) instead. --node N means node N on this machine; a URL also works. The group is remembered
 from the last command, so --group is only needed to switch. The venue key comes from data/local/venue/ (made by
-tools/run_local.py --setup). State: data/cli/state.json.
+tools/run_local.py --setup); for another venue put --venue-dir before the command:
+
+    python tools/dev_cli.py --venue-dir data/venues/5 show --node ws://192.168.0.67:8641/
+
+State: data/cli/state.json.
 """
 
 from __future__ import annotations
@@ -106,13 +110,16 @@ def next_seq(state: dict[str, Any], user: str, group: str) -> int:
     return int(state["seq"][key])
 
 
+venue_dir = VENUE_DIR
+
+
 def venue() -> tuple[bytes, int]:
     """(venue public key, venue ID): what a phone gets with the venue map."""
     try:
-        pub = bytes.fromhex((VENUE_DIR / "venue.pub").read_text().strip())
-        venue_id = int(json.loads((VENUE_DIR / "state.json").read_text(encoding="utf-8"))["venue_id"])
+        pub = bytes.fromhex((venue_dir / "venue.pub").read_text().strip())
+        venue_id = int(json.loads((venue_dir / "state.json").read_text(encoding="utf-8"))["venue_id"])
     except OSError:
-        fail(f"no venue in {VENUE_DIR}; run: python tools/run_local.py 3 --setup")
+        fail(f"no venue in {venue_dir}; run: python tools/run_local.py 3 --setup")
     return pub, venue_id
 
 
@@ -595,6 +602,7 @@ def cmd_status(_: dict[str, Any], args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--venue-dir", type=Path, default=VENUE_DIR, help="the venue whose key the beacons must show")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_node(p: argparse.ArgumentParser, via: bool = True) -> None:
@@ -644,6 +652,8 @@ def main() -> None:
     add_node(status, via=False)
 
     args = parser.parse_args()
+    global venue_dir
+    venue_dir = args.venue_dir
     state = load()
     args.fn(state, args)
     if getattr(args, "save", True):
