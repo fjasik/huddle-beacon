@@ -38,7 +38,7 @@ BLUEZ=/etc/bluetooth/main.conf
 if [ -f "$BLUEZ" ]; then
     usermod -aG bluetooth "$SERVICE_USER"
     DROPIN=/etc/systemd/system/bluetooth.service.d/huddle.conf
-    before=$(cat "$BLUEZ" "$DROPIN" 2>/dev/null | md5sum)
+    before=$({ cat "$BLUEZ"; cat "$DROPIN" 2>/dev/null || true; } | md5sum)   # no drop-in yet on a fresh Pi
     sed -i -E 's/^#?Channels = .*/Channels = 1/; s/^#?Experimental = .*/Experimental = true/' "$BLUEZ"
     install -d /etc/systemd/system/bluetooth.service.d
     printf '[Service]\nExecStart=\nExecStart=/usr/libexec/bluetooth/bluetoothd --noplugin=*\n' > "$DROPIN"
