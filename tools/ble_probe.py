@@ -4,21 +4,29 @@
     python tools/ble_probe.py scan                           # adverts with the Huddle service UUID
     python tools/ble_probe.py bench                          # connect time, MTU, echo round trip, throughput
     python tools/ble_probe.py watch --seconds 60             # print every notification (another phone's too)
+    python tools/ble_probe.py l2cap --address D8:3A:DD:B7:7C:C6   # L2CAP channel: connect time, echo, throughput
 
 The server talks to BlueZ over D-Bus directly (dbus-fast) rather than through bless: bless drops the write options,
 so it can't tell which phone wrote. Requests on rx start with one letter and an 8-byte client nonce:
 E<nonce><data> echo, U<nonce><data> upload (counted), S<nonce> stats, R<nonce> reset, D<nonce><u32 n> download n
 bytes. Replies on tx start with the same letter and nonce, so a client can tell its own from other phones'.
+
+The server also listens for L2CAP connection-oriented channels (B2a) and echoes every byte back. The channel number
+(PSM) is readable from the psm characteristic, little-endian u16. No pairing: the channel uses the lowest security
+level, as a phone's insecure channel (Android createInsecureL2capChannel, iOS openL2CAPChannel) expects.
 """
 
 # ruff: noqa: F821, F722
 
 import argparse
 import asyncio
+import ctypes
 import json
 import logging
 import os
+import socket
 import struct
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -28,12 +36,21 @@ SERVICE_UUID = UUID_BASE.format(1)
 INFO_UUID = UUID_BASE.format(2)
 RX_UUID = UUID_BASE.format(3)
 TX_UUID = UUID_BASE.format(4)
+PSM_UUID = UUID_BASE.format(5)
 COMPANY_ID = 0xFFFF
 APP_PATH = "/huddle"
 NONCE = 8
 MAX_VALUE = 512  # longest attribute value BLE allows, whatever the MTU
 MAX_WRITE = 509  # BlueZ as a client refuses longer writes (512 only works for notifications)
 UPLOAD_GAP_S = 0.01  # BlueZ as a client drops unacknowledged writes sent back to back
+DEFAULT_PSM = 0x0081  # first of the LE PSMs (0x80-0xFF) free for our own use
+SOL_BLUETOOTH = 274
+BT_SECURITY = 4
+BT_SECURITY_LOW = 1
+BT_SNDMTU = 12
+BT_RCVMTU = 13
+BDADDR_LE_PUBLIC = 1
+L2CAP_MTU = 2048
 
 log = logging.getLogger("ble_probe")
 
@@ -42,10 +59,37 @@ def advert_data(venue_id: int, beacon_id: int, epoch: int) -> bytes:
     return struct.pack(">HHH", venue_id, beacon_id, epoch)
 
 
+def l2cap_socket() -> socket.socket:
+    sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+    sock.setsockopt(SOL_BLUETOOTH, BT_SECURITY, struct.pack("BB", BT_SECURITY_LOW, 0))
+    return sock
+
+
+def set_receive_mtu(sock: socket.socket) -> None:
+    """Only valid once the socket has an LE address (after bind)."""
+    sock.setsockopt(SOL_BLUETOOTH, BT_RCVMTU, struct.pack("H", L2CAP_MTU))
+
+
+def l2cap_address(sock: socket.socket, call: str, address: str, psm: int) -> None:
+    """bind or connect with an LE address. Python 3.11's socket module only builds BR/EDR L2CAP addresses."""
+    bdaddr = bytes(reversed(bytes.fromhex(address.replace(":", ""))))
+    raw = struct.pack("<HH6sHBx", socket.AF_BLUETOOTH, psm, bdaddr, 0, BDADDR_LE_PUBLIC)
+    libc = ctypes.CDLL(None, use_errno=True)
+    if getattr(libc, call)(sock.fileno(), ctypes.create_string_buffer(raw, len(raw)), len(raw)) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, f"{call}: {os.strerror(err)}")
+
+
+def mtus(sock: socket.socket) -> str:
+    send = struct.unpack("H", sock.getsockopt(SOL_BLUETOOTH, BT_SNDMTU, 2))[0]
+    receive = struct.unpack("H", sock.getsockopt(SOL_BLUETOOTH, BT_RCVMTU, 2))[0]
+    return f"send mtu {send}, receive mtu {receive}"
+
+
 # --- server (on the Pi) ---------------------------------------------------------------------------------------------
 
 
-def serve(venue_id: int, beacon_id: int, adapter: str) -> None:
+def serve(venue_id: int, beacon_id: int, adapter: str, psm: int) -> None:
     from dbus_fast import BusType, Variant
     from dbus_fast.aio import MessageBus
     from dbus_fast.service import PropertyAccess, ServiceInterface, dbus_property, method
@@ -96,10 +140,11 @@ def serve(venue_id: int, beacon_id: int, adapter: str) -> None:
             return True
 
     class Characteristic(ServiceInterface):
-        def __init__(self, uuid: str, flags: list[str]) -> None:
+        def __init__(self, uuid: str, flags: list[str], read: bytes = b"") -> None:
             super().__init__("org.bluez.GattCharacteristic1")
             self.uuid = uuid
             self.flags = flags
+            self.read = read
             self.value = b""
             self.notifying = False
 
@@ -125,7 +170,7 @@ def serve(venue_id: int, beacon_id: int, adapter: str) -> None:
 
         @method()
         def ReadValue(self, options: "a{sv}") -> "ay":
-            return json.dumps({"venue": venue_id, "beacon": beacon_id, "probe": 1}).encode()
+            return self.read
 
         @method()
         def WriteValue(self, value: "ay", options: "a{sv}") -> None:
@@ -184,12 +229,43 @@ def serve(venue_id: int, beacon_id: int, adapter: str) -> None:
             await asyncio.sleep(0)
         log.info(f"download: {total} B sent in chunks of {size}")
 
+    async def echo(conn: socket.socket, peer: str) -> None:
+        loop = asyncio.get_running_loop()
+        total = 0
+        try:
+            while data := await loop.sock_recv(conn, 65535):
+                total += len(data)
+                await loop.sock_sendall(conn, data)
+        except OSError as err:
+            log.info(f"l2cap {peer}: {err}")
+        finally:
+            conn.close()
+            log.info(f"l2cap {peer}: closed after {total} B echoed")
+
+    async def l2cap_listen() -> None:
+        loop = asyncio.get_running_loop()
+        server = l2cap_socket()
+        l2cap_address(server, "bind", "00:00:00:00:00:00", psm)
+        set_receive_mtu(server)
+        server.listen(8)
+        sessions: set[asyncio.Task[None]] = set()
+        server.setblocking(False)
+        log.info(f"l2cap listening on psm 0x{psm:04X}")
+        while True:
+            conn, peer = await loop.sock_accept(server)
+            conn.setblocking(False)
+            log.info(f"l2cap connection from {peer[0]}: {mtus(conn)}")
+            sessions.add(task := loop.create_task(echo(conn, peer[0])))
+            task.add_done_callback(sessions.discard)
+
     async def main() -> None:
         bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+        info = json.dumps({"venue": venue_id, "beacon": beacon_id, "probe": 1}).encode()
         bus.export(f"{APP_PATH}/service0", Service())
-        bus.export(f"{APP_PATH}/service0/info", Characteristic(INFO_UUID, ["read"]))
+        bus.export(f"{APP_PATH}/service0/info", Characteristic(INFO_UUID, ["read"], info))
         bus.export(f"{APP_PATH}/service0/rx", Characteristic(RX_UUID, ["write-without-response", "write"]))
         bus.export(f"{APP_PATH}/service0/tx", tx)
+        bus.export(f"{APP_PATH}/service0/psm", Characteristic(PSM_UUID, ["read"], struct.pack("<H", psm)))
         bus.export(f"{APP_PATH}/advert0", Advert())
         path = f"/org/bluez/{adapter}"
         hci = bus.get_proxy_object("org.bluez", path, await bus.introspect("org.bluez", path))
@@ -202,7 +278,7 @@ def serve(venue_id: int, beacon_id: int, adapter: str) -> None:
             f"serving {SERVICE_UUID} on {adapter}, "
             f"advert huddle-{venue_id}-{beacon_id}: company {COMPANY_ID:04X} data {data}"
         )
-        await asyncio.Event().wait()
+        await l2cap_listen()
 
     asyncio.run(main())
 
@@ -348,6 +424,52 @@ async def watch(address: str | None, seconds: float) -> None:
         await client.disconnect()
 
 
+def l2cap(address: str, psm: int, echoes: int, kilobytes: int) -> None:
+    sock = l2cap_socket()
+    l2cap_address(sock, "bind", "00:00:00:00:00:00", 0)
+    set_receive_mtu(sock)
+    start = time.perf_counter()
+    l2cap_address(sock, "connect", address, psm)
+    opened = (time.perf_counter() - start) * 1000
+    print(f"l2cap channel to {address} psm 0x{psm:04X} open in {opened:.0f} ms, {mtus(sock)}")
+    try:
+        rtts = []
+        for i in range(echoes):
+            message = struct.pack(">I", i) + bytes(16)
+            start = time.perf_counter()
+            sock.sendall(message)
+            if sock.recv(65535) != message:
+                raise SystemExit("echo came back different")
+            rtts.append((time.perf_counter() - start) * 1000)
+        rtts.sort()
+        print(f"echo 20 B x{echoes}: median {rtts[len(rtts) // 2]:.1f} ms, p95 {rtts[int(len(rtts) * 0.95)]:.1f} ms")
+
+        total = kilobytes * 1024
+        chunk = bytes(1000)
+        received = 0
+
+        def read_back() -> None:
+            nonlocal received
+            while received < total:
+                data = sock.recv(65535)
+                if not data:
+                    return
+                received += len(data)
+
+        reader = threading.Thread(target=read_back)
+        reader.start()
+        start = time.perf_counter()
+        for offset in range(0, total, len(chunk)):
+            sock.sendall(chunk[: min(len(chunk), total - offset)])
+        reader.join(60)
+        elapsed = time.perf_counter() - start
+        print(
+            f"echo stream: {received}/{total} B there and back in {elapsed:.2f} s, {received / elapsed / 1024:.1f} KB/s"
+        )
+    finally:
+        sock.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -355,6 +477,7 @@ def main() -> None:
     s.add_argument("--venue", type=int, required=True)
     s.add_argument("--beacon", type=int, required=True)
     s.add_argument("--adapter", default="hci0")
+    s.add_argument("--psm", type=lambda v: int(v, 0), default=DEFAULT_PSM)
     sc = sub.add_parser("scan")
     sc.add_argument("--seconds", type=float, default=15.0)
     b = sub.add_parser("bench")
@@ -364,13 +487,20 @@ def main() -> None:
     w = sub.add_parser("watch")
     w.add_argument("--address")
     w.add_argument("--seconds", type=float, default=60.0)
+    lc = sub.add_parser("l2cap")
+    lc.add_argument("--address", required=True)
+    lc.add_argument("--psm", type=lambda v: int(v, 0), default=DEFAULT_PSM)
+    lc.add_argument("--echoes", type=int, default=100)
+    lc.add_argument("--kb", type=int, default=64)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     if args.command == "serve":
-        serve(args.venue, args.beacon, args.adapter)
+        serve(args.venue, args.beacon, args.adapter, args.psm)
     elif args.command == "scan":
         asyncio.run(scan(args.seconds))
+    elif args.command == "l2cap":
+        l2cap(args.address, args.psm, args.echoes, args.kb)
     elif args.command == "bench":
         asyncio.run(bench(args.address, args.echoes, args.kb))
     else:
