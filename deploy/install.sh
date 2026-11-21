@@ -10,8 +10,9 @@
 # systemd alone (and disables a service installed before), for running the beacon by hand.
 #
 # Bluetooth (phones over BLE): the service user joins the bluetooth group (to register with BlueZ), and BlueZ gets
-# EATT off (Channels = 1: with EATT, clients missed notifications) and Experimental on (so it honours the advert
-# interval the beacon asks for). bluetoothd restarts only if its config changed.
+# EATT off (Channels = 1: with EATT, clients missed notifications), Experimental on (so it honours the advert
+# interval the beacon asks for) and no plugins (Experimental wakes the LE Audio ones, which probe a connecting phone's
+# audio services and make it ask to pair). bluetoothd restarts only if its config changed.
 set -euo pipefail
 
 PACKAGE=$(realpath "${1:?usage: install.sh <huddle-beacon.tar.gz> [--no-service]}")
@@ -36,9 +37,13 @@ install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATA"
 BLUEZ=/etc/bluetooth/main.conf
 if [ -f "$BLUEZ" ]; then
     usermod -aG bluetooth "$SERVICE_USER"
-    before=$(md5sum "$BLUEZ")
+    DROPIN=/etc/systemd/system/bluetooth.service.d/huddle.conf
+    before=$(cat "$BLUEZ" "$DROPIN" 2>/dev/null | md5sum)
     sed -i -E 's/^#?Channels = .*/Channels = 1/; s/^#?Experimental = .*/Experimental = true/' "$BLUEZ"
-    if [ "$before" != "$(md5sum "$BLUEZ")" ]; then
+    install -d /etc/systemd/system/bluetooth.service.d
+    printf '[Service]\nExecStart=\nExecStart=/usr/libexec/bluetooth/bluetoothd --noplugin=*\n' > "$DROPIN"
+    if [ "$before" != "$(cat "$BLUEZ" "$DROPIN" | md5sum)" ]; then
+        systemctl daemon-reload
         systemctl restart bluetooth
         sleep 2
     fi

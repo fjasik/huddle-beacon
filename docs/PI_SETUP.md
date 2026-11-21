@@ -44,7 +44,9 @@ First see what would run (nothing happens on the Pi):
 
 Add `--ble` so phones can also connect over Bluetooth LE (an L2CAP channel; see `spec/PHONE.md`). `install.sh`
 prepares BlueZ for it: the service user joins the `bluetooth` group, EATT is turned off (`Channels = 1`; with it,
-clients missed data) and `Experimental = true` lets the beacon advertise every 100–150 ms instead of every 1.28 s.
+clients missed data), `Experimental = true` lets the beacon advertise every 100–150 ms instead of every 1.28 s, and
+bluetoothd runs without plugins (a systemd drop-in): Experimental also starts its LE Audio plugins, which probe a
+connecting phone's audio services and make the phone ask to pair.
 
 Then the same without `--dry-run`. `--peer` gives the beacons it starts from; give at least one that is running.
 More are learned from the roster. Every step is printed before it runs. At the end it prints the service state,
