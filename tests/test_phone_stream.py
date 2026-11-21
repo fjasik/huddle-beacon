@@ -89,3 +89,28 @@ async def test_the_beacon_closing_ends_the_phones_connection(beacon: Beacon) -> 
     await asyncio.wait_for(phone.wait_closed(), 2)
     await asyncio.wait_for(serving, 2)
     assert phone.closed
+
+
+class FailingGatt:
+    """Stands in for BleGatt where Bluetooth can't be used."""
+
+    def __init__(self) -> None:
+        self.stops = 0
+
+    async def start(self) -> None:
+        raise OSError("Bluetooth is off")
+
+    async def stop(self) -> None:
+        self.stops += 1
+
+
+async def test_no_bluetooth_doesnt_stop_the_beacon_and_it_keeps_trying(beacon: Beacon) -> None:
+    from beacon.phone.l2cap import L2capListener
+
+    gatt = FailingGatt()
+    listener = L2capListener(beacon.hub, gatt=gatt)  # type: ignore[arg-type]
+    await asyncio.wait_for(listener.start(retry_s=0.01), 2)
+    assert not listener.up
+    await asyncio.sleep(0.1)
+    assert gatt.stops >= 3  # it tried again (each failed try cleans up)
+    await listener.stop()

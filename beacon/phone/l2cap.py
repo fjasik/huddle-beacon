@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 DEFAULT_PSM = 0x0081
 """first of the LE channel numbers (0x80-0xFF) free for our own use"""
 RECEIVE_MTU = 2048
+RETRY_S = 30.0
+"""how often to try again when Bluetooth isn't usable (off, blocked, missing)"""
 ANY = "00:00:00:00:00:00"
 BTPROTO_L2CAP = 0
 SOL_BLUETOOTH = 274
@@ -73,7 +75,8 @@ def _call(sock: socket.socket, name: str, address: str, psm: int) -> None:
 
 class L2capListener(PhoneListener):
     """Accepts phones' L2CAP channels on one PSM and serves each as a phone session. With a `BleGatt`, it also
-    advertises the beacon and publishes the PSM over GATT, once the channel is listening."""
+    advertises the beacon and publishes the PSM over GATT, once the channel is listening. If Bluetooth isn't usable it
+    says so and keeps trying in the background: the beacon's mesh and WebSocket phones don't wait for it."""
 
     name = "ble"
 
@@ -84,18 +87,58 @@ class L2capListener(PhoneListener):
         self._sock: socket.socket | None = None
         self._accepting: asyncio.Task[None] | None = None
         self._serving: set[asyncio.Task[None]] = set()
+        self._bringing_up: asyncio.Task[None] | None = None
+        self.up = False
 
     @property
     def address(self) -> str:
         return f"Bluetooth LE, L2CAP channel 0x{self.psm:04X}"
 
-    async def start(self) -> None:
+    async def start(self, retry_s: float = RETRY_S) -> None:
+        """Returns once Bluetooth is up, or after the first failed try (then it retries in the background)."""
+        first = asyncio.get_running_loop().create_future()
+        self._bringing_up = asyncio.create_task(self._bring_up(retry_s, first))
+        await first
+
+    async def _bring_up(self, retry_s: float, first: asyncio.Future[None]) -> None:
+        while True:
+            try:
+                await self._up()
+                self.up = True
+                log.info("phones can connect over Bluetooth LE (L2CAP channel 0x%04X)", self.psm)
+            except Exception as err:  # Bluetooth off, blocked or missing; BlueZ not running
+                log.warning(
+                    "Bluetooth LE not usable (%s): phones can't connect over Bluetooth; trying again in %.0f s",
+                    err,
+                    retry_s,
+                )
+                await self._down()
+            if not first.done():
+                first.set_result(None)
+            if self.up:
+                return
+            await asyncio.sleep(retry_s)
+
+    async def _up(self) -> None:
         self._sock = l2cap_socket(ANY, self.psm)
         self._sock.listen(16)
         self._sock.setblocking(False)
         self._accepting = asyncio.create_task(self._accept(self._sock))
         if self.gatt is not None:
             await self.gatt.start()
+
+    async def _down(self) -> None:
+        if self.gatt is not None:
+            with contextlib.suppress(Exception):
+                await self.gatt.stop()
+        if self._accepting is not None:
+            self._accepting.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._accepting
+            self._accepting = None
+        if self._sock is not None:
+            self._sock.close()
+            self._sock = None
 
     async def _accept(self, server: socket.socket) -> None:
         loop = asyncio.get_running_loop()
@@ -118,13 +161,11 @@ class L2capListener(PhoneListener):
             stream.close()
 
     async def stop(self) -> None:
-        if self.gatt is not None:
-            await self.gatt.stop()
-        if self._accepting is not None:
-            self._accepting.cancel()
+        if self._bringing_up is not None:
+            self._bringing_up.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._accepting
-        if self._sock is not None:
-            self._sock.close()
+                await self._bringing_up
+        await self._down()
+        self.up = False
         if self._serving:
             await asyncio.gather(*self._serving, return_exceptions=True)

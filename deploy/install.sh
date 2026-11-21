@@ -47,6 +47,12 @@ if [ -f "$BLUEZ" ]; then
         systemctl restart bluetooth
         sleep 2
     fi
+    for r in /sys/class/rfkill/rfkill*; do   # a soft-blocked radio can't be powered on; systemd keeps the unblock
+        if [ "$(cat "$r/type" 2>/dev/null)" = bluetooth ]; then
+            echo 0 > "$r/soft"
+        fi
+    done
+    sleep 1
     bluetoothctl power on >/dev/null || true
 fi
 
