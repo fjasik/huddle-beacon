@@ -1,15 +1,44 @@
 # Huddle phone ↔ beacon protocol, v1
 
-How a phone talks to a beacon. The same messages travel over every transport: a WebSocket now (emulators, PC, a phone on the venue Wi-Fi), BLE GATT later. Records themselves are defined in `RECORDS.md`; `vectors.json` holds worked `hello` cases that the beacon and the app must both pass.
+How a phone talks to a beacon. The same messages travel over every transport: Bluetooth LE (an L2CAP channel; phones at the venue) and a WebSocket (emulators, the PC, a phone on the same network). Records themselves are defined in `RECORDS.md`; `vectors.json` holds worked `hello` cases that the beacon and the app must both pass.
 
 ## Transports
 
 | Transport | How messages travel |
 |---|---|
+| Bluetooth LE | An L2CAP connection-oriented channel (see below). Each protocol message is a 4-byte big-endian length, then the message. |
 | WebSocket | `ws://<beacon>:864N/`. One binary WebSocket message = one protocol message. |
-| BLE GATT (later) | Write to `rx`, notifications on `tx`, cut into chunks with a 1-byte header (`last` bit plus a 7-bit counter). |
 
 A transport only moves whole messages in both directions; nothing below depends on which one is used.
+
+## Bluetooth LE
+
+**Finding a beacon.** Beacons advertise (about every 100–150 ms):
+
+| Field | Value |
+|---|---|
+| Service UUID | `91ec0001-2fd4-463a-a7d3-5eed96717927` — phones scan with this as the filter |
+| Manufacturer data | company `0xFFFF` (test ID), then `venue_id`, `beacon_id`, `epoch`: 2 bytes each, big-endian. `epoch` is 0 for now. |
+| Name | `huddle-<venue>-<beacon>`, for people (scanner apps, logs); the app doesn't rely on it |
+
+The phone keeps the adverts of its own venue and picks by signal strength. Anyone can advertise anything; trust comes only from `hello`.
+
+**GATT** (service `91ec0001-…`), read-only:
+
+| Characteristic | UUID | Value |
+|---|---|---|
+| `info` | `91ec0002-2fd4-463a-a7d3-5eed96717927` | CBOR `{v, venue_id, beacon_id, psm}` |
+| `psm` | `91ec0005-2fd4-463a-a7d3-5eed96717927` | the L2CAP channel number, 2 bytes little-endian (`0x0081` by default) |
+
+**The channel.** The phone connects, reads `psm`, then opens an LE credit-based L2CAP channel to it without pairing (Android `createInsecureL2capChannel(psm)`, iOS `openL2CAPChannel(psm)`). One channel = one session, exactly like one WebSocket: `hello` first, then any ops. It ends when either side closes it or the Bluetooth link drops (supervision timeout, a few seconds). The channel carries a byte stream: write `length (4 bytes, big-endian) ‖ message`, and read the same way, whatever pieces the bytes arrive in. A length over 256 KB ends the connection.
+
+Framing vectors (hex):
+
+| Message | On the channel |
+|---|---|
+| empty | `00000000` |
+| `a0` | `00000001a0` |
+| `{id: 1, op: "hello", args: {v: 1, nonce: 00 01 … 0f}}` | `0000002ea362696401626f706568656c6c6f6461726773a2617601656e6f6e636550000102030405060708090a0b0c0d0e0f` |
 
 ## Messages
 

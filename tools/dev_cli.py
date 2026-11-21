@@ -21,6 +21,7 @@ from the last command, so --group is only needed to switch. The venue key comes 
 tools/run_local.py --setup); for another venue put --venue-dir before the command:
 
     python tools/dev_cli.py --venue-dir data/venues/5 show --node ws://192.168.0.67:8641/
+    python tools/dev_cli.py --venue-dir data/venues/5 show --node ble:D8:3A:DD:B7:7C:C6   # over Bluetooth (on a Pi)
 
 State: data/cli/state.json.
 """
@@ -44,8 +45,7 @@ from typing import Any, NoReturn, TypeVar
 import cbor2
 
 from beacon.config import DEV_PORT_BASE, PHONE_PORT_BASE
-from beacon.connect import BeaconRefused, ConnectorError
-from beacon.connect.ws import WsConnector
+from beacon.connect import BeaconConnector, BeaconRefused, ConnectorError, connector_for
 from beacon.records import Body, GroupKeys, KeyPair, RecordType, Rejected, sign_record, validate_record
 from beacon.records.any import validate_any
 from beacon.records.cipher import DecryptError, open_payload, seal
@@ -166,11 +166,13 @@ class Link:
         self.state = state
         self.node = args.node
         self.via = args.via
-        self.phone: WsConnector | None = None
+        self.phone: BeaconConnector | None = None
 
     def url(self) -> str:
         ws = self.via == "ws"
         node: str = self.node
+        if node.startswith("ble:"):
+            return node
         if not node.isdigit():
             return node.rstrip("/") + ("/" if ws else "")
         port = int(node) if int(node) >= 100 else (PHONE_PORT_BASE if ws else DEV_PORT_BASE) + int(node)
@@ -187,7 +189,7 @@ class Link:
 
     async def _connect(self) -> None:
         venue_pub, venue_id = venue()
-        phone = WsConnector(self.url(), venue_pub, venue_id, is_revoked=PhoneVenue(self.state).is_revoked)
+        phone = connector_for(self.url(), venue_pub, venue_id, is_revoked=PhoneVenue(self.state).is_revoked)
         try:
             info = await phone.connect()
         except BeaconRefused as err:

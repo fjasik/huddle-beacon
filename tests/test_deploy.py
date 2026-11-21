@@ -59,3 +59,14 @@ def test_pi_config_listens_on_the_network_and_uses_absolute_paths(tmp_path: Path
     assert (config.host, config.phone_host, config.phone_port) == ("0.0.0.0", "0.0.0.0", 8643)
     assert config.key_file.as_posix().endswith("/etc/huddle-beacon/beacon.key")
     assert config.data_dir.as_posix().endswith("/var/lib/huddle-beacon")
+
+
+def test_pi_config_can_turn_on_bluetooth(tmp_path: Path) -> None:
+    provision = load_tool("provision")
+    path = tmp_path / "beacon.toml"
+    path.write_text(render(provision.beacon_config(3, 1, "192.168.0.69", [], False, ble=True)), encoding="utf-8")
+    config = Config.load(path)
+    assert (config.ble, config.ble_adapter, config.ble_psm) == (True, "hci0", 0x0081)
+    off = tmp_path / "off.toml"
+    off.write_text(render(provision.beacon_config(3, 1, "192.168.0.69", [], False)), encoding="utf-8")
+    assert not Config.load(off).ble

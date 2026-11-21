@@ -1,5 +1,5 @@
 """The phone ↔ beacon protocol: message shapes, ops, errors, limits and the `hello` check. No I/O; the same messages
-travel over every transport (WebSocket now, BLE GATT later). Spec: `spec/PHONE.md`.
+travel over every transport (Bluetooth LE or WebSocket). Spec: `spec/PHONE.md`.
 
     request  {id, op, args}                 id ≥ 1, chosen by the phone
     reply    {id, ok: {...}}  or  {id, err, detail}

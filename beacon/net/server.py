@@ -3,7 +3,7 @@
 - Peer API (mutual TLS, `port`): the sync endpoints. Every caller is identified by its venue certificate; revoked
   ones are refused. Beacons may call everything; the operator only /sync/records (to load revocations).
 - Dev API (plain HTTP, `dev_port`, bound to 127.0.0.1): the status page, /status, and the endpoints the dev CLI (the
-  stand-in phone) uses. Local only: phones reach beacons over BLE later, not HTTP.
+  stand-in phone) uses. Local only: phones reach beacons over Bluetooth LE or the phone WebSocket, not this.
 """
 
 from __future__ import annotations

@@ -1,6 +1,7 @@
 """Measure phone-to-phone delivery: a phone posts to one beacon, a phone watching another beacon gets the event.
 
     python tools/latency.py --from 1 --to 3 --count 20      # node numbers (phone ports 864N), or ws:// URLs
+    python tools/latency.py --from ble:D8:3A:DD:B7:7C:C6 --to ws://192.168.0.69:8643/   # Bluetooth on one end (Linux)
 
 Two connectors play the phones: one watches a throwaway group on the second beacon, the other posts `count`
 messages to the first. Each delay runs from just before the push to the moment the watch event arrives, so it covers
@@ -18,7 +19,7 @@ import time
 from pathlib import Path
 
 from beacon.config import PHONE_PORT_BASE
-from beacon.connect.ws import WsConnector
+from beacon.connect import connector_for
 from beacon.records import Body, GroupKeys, KeyPair, RecordType, sign_record
 from beacon.records.payloads import encode_payload
 
@@ -27,6 +28,8 @@ TIMEOUT_S = 10.0
 
 
 def url(node: str) -> str:
+    if node.startswith("ble:"):
+        return node
     if node.isdigit():
         return f"ws://127.0.0.1:{PHONE_PORT_BASE + int(node) if int(node) < 100 else int(node)}/"
     return node
@@ -39,8 +42,8 @@ async def measure(source: str, target: str, count: int, venue_dir: Path) -> list
     arrived: asyncio.Queue[float] = asyncio.Queue()
     delays: list[float] = []
     async with (
-        WsConnector(url(source), venue_pub, venue_id) as poster,
-        WsConnector(url(target), venue_pub, venue_id) as watcher,
+        connector_for(url(source), venue_pub, venue_id) as poster,
+        connector_for(url(target), venue_pub, venue_id) as watcher,
     ):
         assert poster.info and watcher.info
         print(f"posting on {poster.info.name}, watching on {watcher.info.name}")

@@ -6,6 +6,9 @@ port = 8441                                 # peer API, mutual TLS
 dev_port = 8541                             # status page and dev CLI, plain HTTP on 127.0.0.1 only
 phone_port = 8641                           # phones over WebSocket (leave out for no phone listener)
 phone_host = "0.0.0.0"                      # where it listens; 127.0.0.1 is enough for emulators and the PC
+ble = false                                 # phones over Bluetooth LE too (Linux with BlueZ; the [ble] extra)
+ble_adapter = "hci0"
+ble_psm = 129                               # the L2CAP channel phones open (0x81)
 host = "127.0.0.1"                          # where the peer API listens
 advertise_url = "https://127.0.0.1:8441"    # what the roster tells other beacons (default: from host and port)
 data_dir = "node1"                          # the database
@@ -49,6 +52,9 @@ class Config:
     dev_port: int = 0
     phone_port: int | None = None
     phone_host: str = "0.0.0.0"
+    ble: bool = False
+    ble_adapter: str = "hci0"
+    ble_psm: int = 0x0081
     host: str = "0.0.0.0"
     advertise_url: str = ""
     peers: list[str] = field(default_factory=list)

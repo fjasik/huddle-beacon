@@ -17,6 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ble = [
+    "dbus-fast>=2.21",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
@@ -45,6 +48,10 @@ packages = ["beacon"]
 [[tool.mypy.overrides]]
 module = ["nacl.*", "cbor2.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["beacon.phone.gatt"]
+disable_error_code = ["name-defined", "valid-type"]  # dbus-fast reads D-Bus types from annotations ("s", "ay")
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

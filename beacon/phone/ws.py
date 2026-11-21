@@ -1,5 +1,5 @@
 """Phones over WebSocket: `ws://<host>:<port>/`, one binary WebSocket message per protocol message. Used by emulators,
-the dev CLI and phones on the venue Wi-Fi; BLE GATT will sit next to it with the same session logic."""
+the dev CLI and phones on the venue Wi-Fi; Bluetooth LE (`l2cap.py`) sits next to it with the same session logic."""
 
 from __future__ import annotations
 

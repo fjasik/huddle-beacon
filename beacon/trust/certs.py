@@ -2,7 +2,7 @@
 formats for the same key pair:
 
 - X.509, for mutual TLS between beacons (and the operator's tools). Subject CN = "beacon-3" / "operator-1".
-- Compact, CBOR [body, sig], about 150 bytes, for phones (over BLE later) and the gossiped roster.
+- Compact, CBOR [body, sig], about 150 bytes, for phones (at hello) and the gossiped roster.
 
 All keys are Ed25519. A key file holds the 32-byte seed as unencrypted PKCS#8 PEM.
 """

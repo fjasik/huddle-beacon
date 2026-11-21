@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import signal
 from pathlib import Path
 
 from beacon import __version__
@@ -22,8 +23,11 @@ from beacon.trust.certs import read_key, write_key
 async def _run(config: Config) -> None:
     node = Node(config)
     await node.start()
+    stopping = asyncio.Event()
+    with contextlib.suppress(NotImplementedError):  # no signal handlers on Windows; Ctrl+C still works
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stopping.set)  # systemd's stop
     try:
-        await asyncio.Event().wait()  # until Ctrl+C
+        await stopping.wait()  # until SIGTERM or Ctrl+C
     finally:
         await node.stop()
 

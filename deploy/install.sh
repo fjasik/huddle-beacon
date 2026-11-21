@@ -8,6 +8,10 @@
 #
 # The service is enabled here but only started by provision.py, once the config is in place. --no-service leaves
 # systemd alone (and disables a service installed before), for running the beacon by hand.
+#
+# Bluetooth (phones over BLE): the service user joins the bluetooth group (to register with BlueZ), and BlueZ gets
+# EATT off (Channels = 1: with EATT, clients missed notifications) and Experimental on (so it honours the advert
+# interval the beacon asks for). bluetoothd restarts only if its config changed.
 set -euo pipefail
 
 PACKAGE=$(realpath "${1:?usage: install.sh <huddle-beacon.tar.gz> [--no-service]}")
@@ -25,9 +29,21 @@ install -d -o root -g "$SERVICE_USER" -m 750 "$CONF"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATA"
 
 [ -x "$APP/venv/bin/python" ] || python3 -m venv "$APP/venv"
-"$APP/venv/bin/pip" install --quiet "$PACKAGE"
-# Same version number as before, so force the new code in.
+# Same version number as before, so force the new code (and its metadata) in first, then add what it needs.
 "$APP/venv/bin/pip" install --quiet --force-reinstall --no-deps "$PACKAGE"
+"$APP/venv/bin/pip" install --quiet "huddle-beacon[ble] @ file://$PACKAGE"
+
+BLUEZ=/etc/bluetooth/main.conf
+if [ -f "$BLUEZ" ]; then
+    usermod -aG bluetooth "$SERVICE_USER"
+    before=$(md5sum "$BLUEZ")
+    sed -i -E 's/^#?Channels = .*/Channels = 1/; s/^#?Experimental = .*/Experimental = true/' "$BLUEZ"
+    if [ "$before" != "$(md5sum "$BLUEZ")" ]; then
+        systemctl restart bluetooth
+        sleep 2
+    fi
+    bluetoothctl power on >/dev/null || true
+fi
 
 if [ "$WITH_SERVICE" = yes ]; then
     install -m 644 "$HERE/huddle-beacon.service" /etc/systemd/system/huddle-beacon.service

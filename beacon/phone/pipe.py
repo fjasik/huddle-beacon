@@ -1,4 +1,4 @@
-"""The two transport seams on the beacon side. A transport (WebSocket now, BLE GATT later) provides a listener that
+"""The two transport seams on the beacon side. A transport (Bluetooth LE or WebSocket) provides a listener that
 accepts phones, and wraps each connection in a pipe that moves whole messages. Everything above (sessions, ops,
 watch) is the same for every transport."""
 

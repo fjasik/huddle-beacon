@@ -4,6 +4,7 @@
     python tools/provision.py 3 qorvo-pi-3 --dry-run        # print every command; nothing runs on the Pi
     python tools/provision.py 3 qorvo-pi-3                  # new certificates and config only (code already there)
     python tools/provision.py 3 qorvo-pi-3 --install --skip-service-setup   # no systemd service; run it by hand
+    python tools/provision.py 3 qorvo-pi-3 --ble            # phones over Bluetooth LE too
 
 1. --install: copy the committed code (git archive HEAD) and deploy/ to the Pi and run deploy/install.sh.
 2. Make the beacon's key on the Pi. Only its public half comes back; the key never leaves the Pi.
@@ -75,7 +76,9 @@ def address_of(host: str) -> str:
     return socket.gethostbyname(name)
 
 
-def beacon_config(beacon_id: int, venue_id: int, address: str, peers: list[str], mdns: bool) -> dict[str, object]:
+def beacon_config(
+    beacon_id: int, venue_id: int, address: str, peers: list[str], mdns: bool, ble: bool = False
+) -> dict[str, object]:
     beacon_ports = ports(beacon_id)
     return {
         "beacon_id": beacon_id,
@@ -92,6 +95,7 @@ def beacon_config(beacon_id: int, venue_id: int, address: str, peers: list[str],
         "ca_file": str(CONF / "venue-ca.crt"),
         "venue_pub_file": str(CONF / "venue.pub"),
         "mdns": mdns,
+        "ble": ble,
     }
 
 
@@ -126,6 +130,7 @@ def main() -> None:
     parser.add_argument("--address", help="the Pi's IP address (default: what the SSH host resolves to)")
     parser.add_argument("--peer", action="append", default=[], help="peer URL to start from, e.g. https://IP:8441")
     parser.add_argument("--mdns", action="store_true", help="also find other beacons by mDNS")
+    parser.add_argument("--ble", action="store_true", help="phones over Bluetooth LE (L2CAP) as well as WebSocket")
     parser.add_argument("--venue-dir", type=Path, default=ROOT / "data" / "local" / "venue")
     parser.add_argument("--days", type=int, default=30, help="certificates expire after this many days")
     parser.add_argument("--install", action="store_true", help="install or upgrade the code first")
@@ -153,7 +158,7 @@ def main() -> None:
         print(f"(dry run: certificates would be issued here for the key the Pi prints, for {address})")
     (staging / "venue-ca.crt").write_bytes(venue.ca_file.read_bytes())
     (staging / "venue.pub").write_bytes(venue.pub_file.read_bytes())
-    config = beacon_config(args.id, venue.venue_id, address, args.peer, args.mdns)
+    config = beacon_config(args.id, venue.venue_id, address, args.peer, args.mdns, args.ble)
     (staging / "beacon.toml").write_text(render(config), encoding="utf-8", newline="\n")
     print(f"staged in {staging}")
 

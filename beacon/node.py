@@ -70,6 +70,12 @@ class Node:
         self.phone_listeners: list[PhoneListener] = []
         if config.phone_port is not None:
             self.phone_listeners.append(WsListener(self.phones, config.phone_host, config.phone_port))
+        if config.ble:
+            from beacon.phone.gatt import BleGatt  # needs dbus-fast and BlueZ: Linux only
+            from beacon.phone.l2cap import L2capListener
+
+            gatt = BleGatt(config.venue_id, config.beacon_id, config.ble_psm, config.ble_adapter)
+            self.phone_listeners.append(L2capListener(self.phones, config.ble_psm, gatt))
 
     @property
     def advertise_url(self) -> str:
