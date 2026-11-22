@@ -46,7 +46,7 @@ Both signatures cover the body bytes **exactly as sent**. A receiver never re-en
 | 1 | group | `name` |
 | 2 | join | `name` |
 | 3 | leave | (none) |
-| 4 | pos | `x`, `y`, `acc` (map pixels; numbers) |
+| 4 | pos | `x`, `y`, `acc` (map pixels; numbers), or `stopped: true` alone: the author stopped sharing (phones drop their dot at once) |
 | 5 | msg | `text` (at most 280 bytes of UTF-8) |
 | 6 | pin | `pin_id`, `x`, `y`, `kind`, `label`, `deleted` |
 
