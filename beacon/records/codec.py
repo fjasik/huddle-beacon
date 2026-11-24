@@ -25,6 +25,7 @@ class RecordType(IntEnum):
     POS = 4
     MSG = 5
     PIN = 6
+    SEEN = 7
 
 
 @dataclass(frozen=True)

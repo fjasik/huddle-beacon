@@ -75,7 +75,8 @@ def build_vectors() -> dict[str, Any]:
             "ann pin",
             body(ANN, FRIENDS, RecordType.PIN, 4, {"pin_id": 1, "x": 10, "y": 20, "kind": "meet", "label": "here"}),
         ),
-        ("ben leaves", body(BEN, FRIENDS, RecordType.LEAVE, 3, {})),
+        ("ben has read up to ann's message", body(BEN, FRIENDS, RecordType.SEEN, 3, {"up_to": TS + 3})),
+        ("ben leaves", body(BEN, FRIENDS, RecordType.LEAVE, 4, {})),
         ("encrypted payload is opaque", body(ANN, FRIENDS, RecordType.MSG, 5, {}, enc=1)),
     ]
     records = []

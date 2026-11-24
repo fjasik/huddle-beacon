@@ -44,11 +44,12 @@ Both signatures cover the body bytes **exactly as sent**. A receiver never re-en
 | `type` | Name | Payload fields (when `enc = 0`) |
 |---|---|---|
 | 1 | group | `name` |
-| 2 | join | `name` |
+| 2 | join | `name`; optional `colour` (int, an index into the app's palette of member colours; absent: the app picks one from the author key) |
 | 3 | leave | (none) |
 | 4 | pos | `x`, `y`, `acc` (map pixels; numbers), or `stopped: true` alone: the author stopped sharing (phones drop their dot at once) |
 | 5 | msg | `text` (at most 280 bytes of UTF-8) |
-| 6 | pin | `pin_id`, `x`, `y`, `kind`, `label`, `deleted` |
+| 6 | pin | `pin_id`, `x`, `y`, `kind`, `label`, `deleted` (phones may leave `kind` and `label` empty) |
+| 7 | seen | `up_to`: the `ts` of the newest message the author has read (that message's own `ts`, so the clocks of the two phones don't matter). Only each author's newest `seen` counts |
 
 A record is identified by `(group ID, author, seq)`.
 
@@ -57,7 +58,7 @@ A record is identified by `(group ID, author, seq)`.
 Phones work out membership from the records; beacons never do.
 
 - A user is a member when they have a `join` that is newer (by `ts`) than their latest `leave`.
-- Their display name is the `name` in their latest `join`. Joining again is legal, and is how a member renames themselves.
+- Their display name is the `name` in their latest `join`, and their colour its `colour`. Joining again is legal, and is how a member renames themselves or changes colour.
 - A phone writes a `join` only when its own log has none for the group, or to rename. A repeated join with the same name is harmless but wastes a record.
 - The group's name is the `name` in its `group` record (the first one, written by its creator).
 
