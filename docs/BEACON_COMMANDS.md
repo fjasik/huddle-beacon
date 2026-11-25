@@ -11,6 +11,9 @@ sudo setsid nohup sudo -u huddle-beacon /opt/huddle-beacon/venv/bin/python -m be
   --config /etc/huddle-beacon/beacon.toml > /tmp/beacon.log 2>&1 < /dev/null &
 ```
 
+After a cold boot the Bluetooth adapter can come up powered off (log: "Failed to register advertisement").
+Fix: `sudo bluetoothctl power on`; the beacon retries every 30 s.
+
 Stop: `sudo pkill -f "beacon run"`. Status: `curl -s http://127.0.0.1:854N/status` (N = Pi number).
 
 ## UWB DL-TDoA anchor
