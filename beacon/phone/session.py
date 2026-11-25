@@ -39,7 +39,9 @@ class Limits:
     push_burst: int = 256
     push_rate: float = 32.0
     """records per second the push budget refills"""
-    page_bytes: int = 64 * 1024
+    page_bytes: int = 8 * 1024
+    """one pull reply at most (about 25 records): over Bluetooth a 50 KB reply outlasted the phone's 5 s request
+    timeout, and the phone gave up on its catch-up"""
 
 
 class _Kind(Enum):
